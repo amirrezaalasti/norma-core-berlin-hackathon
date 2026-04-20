@@ -63,7 +63,7 @@ pub fn get_movement_sequence_with_goal(
         config,
     );
 
-    if source.error || target.error {
+    if source.error {
         log::warn!("Skipping mirroring for motor {} on bus {} due to error state [source={}, target={}], curr = {}, limit = {}", motor_id, target_bus_id, source.error, target.error, source.current, source.current_limit);
         return;
     }
