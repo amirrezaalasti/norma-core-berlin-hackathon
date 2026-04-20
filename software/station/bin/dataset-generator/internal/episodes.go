@@ -32,9 +32,8 @@ type EpisodeDetector struct {
 
 	buffer []Frame
 
-	stats                Stats
-	firstSkipImageCount  int
-	program              *tea.Program
+	stats   Stats
+	program *tea.Program
 }
 
 type Stats struct {
@@ -64,21 +63,19 @@ func NewEpisodeDetector(cfg EpisodeDetectorConfig) *EpisodeDetector {
 }
 
 func (ed *EpisodeDetector) ProcessFrame(frame *normvla.FrameReader) {
-	// Skip frames without exactly 2 images
-	if len(frame.GetImages()) != 2 {
+	// Skip frames without any images
+	if len(frame.GetImages()) == 0 {
 		ed.stats.FramesSkippedWrongImageCount++
 
 		// Log first occurrence with details
 		if ed.stats.FramesSkippedWrongImageCount == 1 {
-			ed.firstSkipImageCount = len(frame.GetImages())
 			frameId, _ := uintn.FromLEBytes(frame.GetGlobalFrameId())
-			log.Warn().Msgf("⚠️  Skipping frames with != 2 images (first at frame %v, found %d images)",
-				frameId, len(frame.GetImages()))
+			log.Warn().Msgf("⚠️  Skipping frames with no images (first at frame %v)", frameId)
 		}
 
 		// Log periodic progress every 100 skipped frames
 		if ed.stats.FramesSkippedWrongImageCount%100 == 0 {
-			log.Warn().Msgf("⚠️  Skipped %d frames due to wrong image count",
+			log.Warn().Msgf("⚠️  Skipped %d frames due to no images",
 				ed.stats.FramesSkippedWrongImageCount)
 		}
 
@@ -283,8 +280,7 @@ func (ed *EpisodeDetector) updateGoalTracking(goals []uint32) {
 
 func (ed *EpisodeDetector) GetSkipInfo() (count uint64, reason string) {
 	if ed.stats.FramesSkippedWrongImageCount > 0 {
-		return ed.stats.FramesSkippedWrongImageCount,
-			fmt.Sprintf("expected 2 images, found %d", ed.firstSkipImageCount)
+		return ed.stats.FramesSkippedWrongImageCount, "no images"
 	}
 	return 0, ""
 }
@@ -373,8 +369,8 @@ func (ed *EpisodeDetector) printStats() {
 	log.Info().Msgf("Total frames saved: %d", ed.stats.TotalFramesSaved)
 
 	if ed.stats.FramesSkippedWrongImageCount > 0 {
-		log.Warn().Msgf("⚠️  Frames skipped: %d (expected 2 images, found %d)",
-			ed.stats.FramesSkippedWrongImageCount, ed.firstSkipImageCount)
+		log.Warn().Msgf("⚠️  Frames skipped: %d (no images)",
+			ed.stats.FramesSkippedWrongImageCount)
 	}
 }
 
