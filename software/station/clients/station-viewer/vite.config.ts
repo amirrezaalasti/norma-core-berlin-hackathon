@@ -1,31 +1,28 @@
-import { execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
-import viteCompression from "vite-plugin-compression";
+import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
+import viteCompression from 'vite-plugin-compression';
 
-const workspaceCargoTomlPath = path.resolve(
-  __dirname,
-  "../../../../Cargo.toml",
-);
+const workspaceCargoTomlPath = path.resolve(__dirname, '../../../../Cargo.toml');
 
 function resolveWorkspaceVersion(): string {
   try {
-    const cargoToml = readFileSync(workspaceCargoTomlPath, "utf8");
+    const cargoToml = readFileSync(workspaceCargoTomlPath, 'utf8');
     const lines = cargoToml.split(/\r?\n/);
     let inWorkspacePackage = false;
 
     for (const line of lines) {
       const trimmedLine = line.trim();
 
-      if (!trimmedLine || trimmedLine.startsWith("#")) {
+      if (!trimmedLine || trimmedLine.startsWith('#')) {
         continue;
       }
 
-      if (trimmedLine.startsWith("[") && trimmedLine.endsWith("]")) {
-        inWorkspacePackage = trimmedLine === "[workspace.package]";
+      if (trimmedLine.startsWith('[') && trimmedLine.endsWith(']')) {
+        inWorkspacePackage = trimmedLine === '[workspace.package]';
         continue;
       }
 
@@ -39,21 +36,19 @@ function resolveWorkspaceVersion(): string {
       }
     }
   } catch {
-    return "unknown";
+    return 'unknown';
   }
 
-  return "unknown";
+  return 'unknown';
 }
 
 function resolveGitHash(): string {
   try {
-    return execSync("git rev-parse --short=10 HEAD", {
-      stdio: ["ignore", "pipe", "ignore"],
-    })
+    return execSync('git rev-parse --short=10 HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
       .toString()
       .trim();
   } catch {
-    return "unknown";
+    return 'unknown';
   }
 }
 
@@ -66,22 +61,22 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      '@': path.resolve(__dirname, './src'),
     },
   },
-  assetsInclude: ["**/*.urdf", "**/*.stl"],
+  assetsInclude: ['**/*.urdf', '**/*.stl'],
   esbuild: {
     supported: {
-      "top-level-await": true, // browsers can handle top-level-await features
+      'top-level-await': true, // browsers can handle top-level-await features
     },
   },
   server: {
-    host: "::",
-    allowedHosts: ["localhost", "ds-pc.server"],
+    host: '::',
+    allowedHosts: ['localhost', 'ds-pc.server'],
     port: 5173,
     proxy: {
-      "/api": {
-        target: "ws://arc.server:8889",
+      '/api': {
+        target: 'ws://localhost:8889',
         changeOrigin: false,
         ws: true,
       },
@@ -89,8 +84,8 @@ export default defineConfig({
   },
   plugins: [
     viteCompression({
-      algorithm: "gzip",
-      ext: ".gz",
+      algorithm: 'gzip',
+      ext: '.gz',
       threshold: 1024,
       filter: /\.(js|mjs|json|css|html|urdf|stl)$/i,
     }),
