@@ -268,7 +268,6 @@ impl Inference {
                 delays_us.pop_front();
             }
 
-            // Print statistics every 5 seconds
             if processing_done - last_stats_print >= stats_interval {
                 if !delays_us.is_empty() {
                     let avg_delay_us = delays_us.iter().sum::<u64>() / delays_us.len() as u64;
@@ -277,7 +276,8 @@ impl Inference {
                     let frequency = delays_us.len() as f64 / stats_interval.as_secs_f64();
 
                     log::info!(
-                        "Mirroring stats (last 5s): freq={:.1} Hz, delay avg={:.2}ms min={:.2}ms max={:.2}ms",
+                        "Mirroring stats (last {}s): freq={:.1} Hz, delay avg={:.2}ms min={:.2}ms max={:.2}ms",
+                        stats_interval.as_secs(),
                         frequency,
                         avg_delay_us as f64 / 1000.0,
                         min_delay_us as f64 / 1000.0,
