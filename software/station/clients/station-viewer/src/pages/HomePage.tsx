@@ -7,7 +7,7 @@ import { copyToClipboard } from "@/api/clipboard-utils";
 import { commandManager } from "@/api/commands";
 import { inference_tags } from "@/api/proto.js";
 import { defaultTag } from "@/utils/tag-phrases";
-import { getConnectionStatusColor, getFPSColor } from '@/utils/color-utils';
+import { getFPSColor } from '@/utils/color-utils';
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
