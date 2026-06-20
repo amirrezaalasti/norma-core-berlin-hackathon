@@ -29,6 +29,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--camera-index", type=int, default=0)
     parser.add_argument(
+        "--backend",
+        choices=("yolo", "contrast"),
+        default="yolo",
+        help="Detection backend: 'yolo' (YOLO model, default) or 'contrast' (local dark-blob only)",
+    )
+    parser.add_argument(
         "--model",
         default=os.environ.get("NORMA_VISION_MODEL", DEFAULT_MODEL),
     )
@@ -73,3 +79,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

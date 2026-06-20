@@ -7,18 +7,16 @@ from .obb import obb_from_axis_aligned_box, obb_from_mask
 from .types import Detection
 
 DEFAULT_CLASSES = [
-    "black block",
-    "red bull",
-    "red bull can",
-    "energy drink can",
+    "can",
+    "bottle",
+    "box",
     "cube",
     "block",
     "mug",
     "cup",
-    "rectangular box",
 ]
 
-DEFAULT_MODEL = "yoloe-11s-seg.pt"
+DEFAULT_MODEL = "yolov8s-worldv2.pt"
 COCO_MODEL = "yolo11n.pt"
 
 
@@ -34,10 +32,10 @@ class ObjectDetector:
         self,
         model_name: str = DEFAULT_MODEL,
         classes: list[str] | None = None,
-        confidence: float = 0.1,
+        confidence: float = 0.08,
         device: str | None = None,
         use_contrast_fallback: bool = True,
-        predict_imgsz: int = 640,
+        predict_imgsz: int = 1024,
     ):
         self.model_name = model_name
         self.classes = list(classes or DEFAULT_CLASSES)
@@ -87,6 +85,8 @@ class ObjectDetector:
             conf=self.confidence,
             imgsz=self.predict_imgsz,
             verbose=False,
+            iou=0.45,
+            augment=True,
         )
         if not results:
             detections: list[Detection] = []
@@ -94,7 +94,7 @@ class ObjectDetector:
             detections = self._parse_results(results[0], image_rgb)
 
         if not detections and self.use_contrast_fallback:
-            fallback_class = self.classes[0] if self.classes else "black block"
+            fallback_class = self.classes[0] if self.classes else "block"
             detections = detect_dark_objects(image_rgb, class_name=fallback_class)
 
         detections.sort(key=lambda item: item.confidence, reverse=True)

@@ -12,6 +12,9 @@ class Detection:
     center_xy: tuple[float, float]
     size_wh: tuple[float, float]
     angle_deg: float
+    board_xy: tuple[float, float] | None = None
+    offset_xy: tuple[float, float] | None = None
+    distance: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -22,4 +25,10 @@ class Detection:
             self.size_wh[1],
             self.angle_deg,
         ]
+        if self.board_xy is None:
+            data.pop("board_xy", None)
+        if self.offset_xy is None:
+            data.pop("offset_xy", None)
+        if self.distance is None:
+            data.pop("distance", None)
         return data

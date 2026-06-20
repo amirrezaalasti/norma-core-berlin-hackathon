@@ -1,0 +1,15 @@
+{
+  "bus_serial": "5B61037157",
+  "arm_type": "elrobot",
+  "joint_positions": {
+    "1": 0.5024,
+    "2": 0.9464,
+    "3": 0.0575,
+    "4": 0.5377,
+    "5": 0.4462,
+    "6": 0.9676,
+    "7": 0.2848
+  },
+  "gripper_position": 0.0149,
+  "note": "Saved while arm is at the initialized pose. Pair with manual calibration: Set 4 board points and the gripper tip in the station viewer."
+}

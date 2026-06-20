@@ -76,6 +76,9 @@ export default defineConfig({
     host: '::',
     allowedHosts: ['localhost', 'ds-pc.server'],
     port: 5173,
+    fs: {
+      allow: [path.resolve(__dirname, '../../../..')],
+    },
     proxy: {
       '/api': {
         target: 'ws://localhost:8889',

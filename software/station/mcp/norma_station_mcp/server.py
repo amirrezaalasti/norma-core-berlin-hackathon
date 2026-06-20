@@ -19,7 +19,10 @@ mcp = FastMCP(
         "- move_joint / move_arm_pose: joint-space motion (0.0-1.0 per joint)\n"
         "- open_gripper / close_gripper / set_gripper: gripper control\n"
         "- enable_arm_torque / disable_arm_torque: power all motors\n"
-        "- detect_objects: pretrained YOLOE detection (requires vision extra)\n\n"
+        "- detect_objects: pretrained YOLOE detection (requires vision extra)\n"
+        "- detect_workspace_objects: Roboflow + contrast + gripper-relative offsets\n"
+        "- save_home_pose / pick_nearest_object: vision-guided pick from home pose\n"
+        "- save_pick_reference / get_pick_calibration: empirical pick tuning from a known good pick\n\n"
         "Joint ids match motor ids (SO-101: joints 1-5, gripper 6; ElRobot: joints 1-7, gripper 8).\n"
         "Positions are normalized within each motor's calibrated range, not Cartesian XYZ.\n"
         "Low-level advanced_* tools exist for debugging."
@@ -68,21 +71,21 @@ async def get_arm_state(bus_serial: str = "auto") -> str:
 
 @mcp.tool
 async def open_gripper(bus_serial: str = "auto") -> str:
-    """Fully open the gripper (position 0.0 on the gripper motor's calibrated range)."""
+    """Fully open the gripper (position 1.0 on the gripper motor's calibrated range)."""
     session = get_session()
     return _json(await session.open_gripper(bus_serial))
 
 
 @mcp.tool
 async def close_gripper(bus_serial: str = "auto") -> str:
-    """Fully close the gripper (position 1.0 on the gripper motor's calibrated range)."""
+    """Fully close the gripper (position 0.0 on the gripper motor's calibrated range)."""
     session = get_session()
     return _json(await session.close_gripper(bus_serial))
 
 
 @mcp.tool
 async def set_gripper(position: float, bus_serial: str = "auto") -> str:
-    """Set gripper opening. 0.0 = open, 1.0 = closed, values in between = partial grasp."""
+    """Set gripper opening. 0.0 = closed, 1.0 = open, values in between = partial grasp."""
     session = get_session()
     return _json(await session.set_gripper(position, bus_serial))
 
@@ -154,6 +157,116 @@ async def detect_objects(
         camera_index=camera_index,
         confidence=confidence,
     )
+    return _json(payload)
+
+
+@mcp.tool
+async def detect_workspace_objects(
+    camera_index: int = 0,
+    classes: list[str] | None = None,
+) -> str:
+    """Detect objects on the white board with gripper-relative offset and distance.
+
+    Requires manual calibration in the station viewer (4 board points + gripper tip)
+    synced to the vision server, with the arm at the home pose when setting the tip.
+    Returns offset_xy and distance for each detection.
+    Install vision deps: uv sync --project software/station/mcp --extra vision
+    """
+    from .vision_bridge import detect_workspace_objects as _detect
+
+    payload = await _detect(camera_index=camera_index, classes=classes)
+    return _json(payload)
+
+
+@mcp.tool
+async def save_home_pose(bus_serial: str = "auto") -> str:
+    """Save the current arm joint positions as the initialized home pose.
+
+    Move the arm to the pick-ready pose first, then calibrate the gripper tip in the
+    station viewer while the arm is at this pose. All pick motions are deltas from home.
+    """
+    from .pick_control import home_pose_from_arm_state, save_home_pose as _save
+
+    session = get_session()
+    await session.ensure_connected()
+    await session.wait_for_inference()
+    arm_state = session.get_arm_state(bus_serial)
+    payload = home_pose_from_arm_state(arm_state)
+    return _json(_save(payload))
+
+
+@mcp.tool
+async def get_home_pose() -> str:
+    """Return the saved initialized home pose, if any."""
+    from .pick_control import load_home_pose
+
+    payload = load_home_pose()
+    if payload is None:
+        return _json({"saved": False, "note": "Call save_home_pose with arm at init pose."})
+    return _json({"saved": True, **payload})
+
+
+@mcp.tool
+async def get_pick_calibration() -> str:
+    """Return empirical pick calibration (home→pick joint mapping vs vision offset in mm)."""
+    from .pick_calibration import load_pick_calibration
+
+    payload = load_pick_calibration()
+    if payload is None:
+        return _json(
+            {
+                "saved": False,
+                "note": (
+                    "No pick calibration saved. At home pose call save_home_pose, "
+                    "move to a successful pick pose, then save_pick_reference with the "
+                    "object board_xy from the camera overlay."
+                ),
+            }
+        )
+    return _json({"saved": True, **payload})
+
+
+@mcp.tool
+async def save_pick_reference(
+    board_x: float,
+    board_y: float,
+    bus_serial: str = "auto",
+) -> str:
+    """Record a successful pick pose and derive joint scales from vision board_xy.
+
+    Workflow:
+    1. save_home_pose — arm at home, cube visible
+    2. Manually move arm to a good pick pose (or run a tuned pick once)
+    3. save_pick_reference(board_x, board_y) — object's board_xy from the overlay (e.g. 0.72, 0.51)
+
+    Writes .norma/pick_calibration.json used automatically by pick_nearest_object.
+    """
+    from .pick_control import save_pick_reference as _save
+
+    session = get_session()
+    payload = await _save(session, board_x=board_x, board_y=board_y, bus_serial=bus_serial)
+    return _json({"saved": True, **payload})
+
+
+@mcp.tool
+async def pick_nearest_object(
+    bus_serial: str = "auto",
+    settle_s: float = 1.5,
+    return_home: bool = True,
+) -> str:
+    """Pick the nearest detected object relative to the calibrated gripper tip.
+
+    Workflow:
+    1. In station viewer: Set 4 points (board corners), then Set gripper tip at home pose
+    2. save_home_pose — arm at that same initialized pose
+    3. pick_nearest_object — opens gripper, moves from home by vision offset, closes
+
+    Uses .norma/pick_calibration.json scales when present (from save_pick_reference).
+    """
+    from .pick_control import pick_nearest_object as _pick
+
+    session = get_session()
+    payload = await _pick(session, bus_serial=bus_serial, settle_s=settle_s, return_home=return_home)
     return _json(payload)
 
 

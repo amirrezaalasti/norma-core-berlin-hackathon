@@ -11,7 +11,7 @@ from typing import Any
 
 from .detector import DEFAULT_CLASSES, DEFAULT_MODEL, ObjectDetector
 from .contrast_detector import ContrastDetector
-from .frames import StationFrameReader
+from .frames import create_frame_reader
 
 logger = logging.getLogger("norma-vision-live")
 
@@ -51,7 +51,7 @@ class VisionRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
         self.wfile.write(body)
@@ -59,7 +59,7 @@ class VisionRequestHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
@@ -70,7 +70,65 @@ class VisionRequestHandler(BaseHTTPRequestHandler):
         if self.path == "/latest":
             self._send_json(200, get_latest_snapshot())
             return
+        if self.path == "/calibration/manual":
+            from .manual_workspace_store import load_manual_workspace
+
+            workspace = load_manual_workspace()
+            if workspace is None:
+                self._send_json(404, {"error": "No manual calibration saved"})
+                return
+            self._send_json(200, {"workspace": workspace.to_dict(), "ready": True})
+            return
+        if self.path == "/calibration/camera":
+            from .camera_calibration import calibration_payload_for_api
+
+            payload = calibration_payload_for_api()
+            if payload is None:
+                self._send_json(404, {"error": "No camera calibration found"})
+                return
+            self._send_json(200, payload)
+            return
         self._send_json(404, {"error": "Not found"})
+
+    def do_POST(self) -> None:
+        if self.path != "/calibration/manual":
+            self._send_json(404, {"error": "Not found"})
+            return
+
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length) if length > 0 else b"{}"
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "Invalid JSON"})
+            return
+
+        from .manual_workspace_store import manual_workspace_ready, save_manual_workspace
+
+        try:
+            workspace = save_manual_workspace(payload)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
+
+        self._send_json(
+            200,
+            {
+                "saved": True,
+                "ready": manual_workspace_ready(payload),
+                "workspace": workspace.to_dict(),
+            },
+        )
+
+    def do_DELETE(self) -> None:
+        if self.path != "/calibration/manual":
+            self._send_json(404, {"error": "Not found"})
+            return
+
+        from .manual_workspace_store import clear_manual_workspace
+
+        clear_manual_workspace()
+        self._send_json(200, {"cleared": True})
 
 
 async def detection_loop(
@@ -79,7 +137,7 @@ async def detection_loop(
     camera_index: int,
     target_fps: float,
 ) -> None:
-    reader = StationFrameReader(host)
+    reader = create_frame_reader(host)
     await reader.connect()
 
     frame_times: list[float] = []
@@ -96,6 +154,10 @@ async def detection_loop(
             frame_times = [stamp for stamp in frame_times if started - stamp <= 1.0]
             inference_fps = len(frame_times)
 
+            workspace = getattr(detector, "last_workspace", None)
+            calibration = getattr(detector, "last_calibration", None)
+            gripper_tip = getattr(detector, "last_gripper_tip", None)
+
             set_latest_snapshot(
                 {
                     **meta,
@@ -103,6 +165,9 @@ async def detection_loop(
                     "classes": detector.classes,
                     "detection_count": len(detections),
                     "detections": [item.to_dict() for item in detections],
+                    "workspace": workspace.to_dict() if workspace is not None else None,
+                    "gripper_tip": gripper_tip,
+                    "camera_calibration": calibration.to_dict() if calibration is not None else None,
                     "inference_fps": float(inference_fps),
                     "updated_at_ms": now_ms,
                     "error": None,

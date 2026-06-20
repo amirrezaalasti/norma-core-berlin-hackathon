@@ -13,6 +13,9 @@ vision = [
   "opencv-python-headless>=4.8.0",
   "numpy>=1.24.0",
   "pillow>=10.0.0",
+  "python-dotenv>=1.0.0",
+  "pupil-apriltags>=1.0.4",
+  "inference-sdk>=0.45.0",
   "clip @ git+https://github.com/ultralytics/CLIP.git",
 ]
 
@@ -25,3 +28,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["norma_station_mcp"]
+
+[tool.hatch.metadata]
+allow-direct-references = true

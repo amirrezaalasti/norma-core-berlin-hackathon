@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "norma-station": {
-      "command": "uv",
+      "command": "/opt/anaconda3/bin/uv",
       "args": [
         "run",
         "--project",

@@ -227,6 +227,7 @@ class StationSession:
         bus_serial: str = "auto",
     ) -> dict[str, Any]:
         """Move multiple motors in one sync_write batch."""
+        positions = {int(motor_id): float(position) for motor_id, position in positions.items()}
         await self.ensure_connected()
         await self.wait_for_inference()
 
@@ -288,6 +289,7 @@ class StationSession:
         bus_serial: str = "auto",
     ) -> dict[str, Any]:
         """Move multiple arm joints at once. Keys are joint ids (motor ids 1-5 or 1-7)."""
+        joint_positions = {int(joint_id): float(position) for joint_id, position in joint_positions.items()}
         _, _, profile = self._resolve_bus(bus_serial)
         invalid = [
             joint_id
@@ -309,7 +311,7 @@ class StationSession:
         position: float,
         bus_serial: str = "auto",
     ) -> dict[str, Any]:
-        """Set gripper opening. 0.0 = fully open, 1.0 = fully closed (calibrated range)."""
+        """Set gripper opening. 0.0 = fully closed, 1.0 = fully open (calibrated range)."""
         _, _, profile = self._resolve_bus(bus_serial)
         if profile.gripper_motor_id is None:
             raise RuntimeError("No gripper motor detected on this bus")
@@ -320,7 +322,7 @@ class StationSession:
         )
         result["gripper_motor_id"] = profile.gripper_motor_id
         result["gripper_position"] = position
-        result["gripper_state"] = "closed" if position >= 0.9 else "open" if position <= 0.1 else "partial"
+        result["gripper_state"] = "open" if position >= 0.9 else "closed" if position <= 0.1 else "partial"
         return result
 
     async def open_gripper(self, bus_serial: str = "auto") -> dict[str, Any]:

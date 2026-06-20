@@ -19,16 +19,22 @@ def _saturation(r: float, g: float, b: float) -> float:
 
 
 def _is_red_pixel(r: float, g: float, b: float) -> bool:
-    return r > 110 and r > g * 1.35 and r > b * 1.25 and _saturation(r, g, b) > 0.3
+    return r > 90 and r > g * 1.2 and r > b * 1.15 and _saturation(r, g, b) > 0.2
 
 
 def _is_blue_pixel(r: float, g: float, b: float) -> bool:
-    return b > 90 and b > r * 1.15 and b > g * 1.05 and _saturation(r, g, b) > 0.25
+    return b > 70 and b > r * 1.05 and b > g * 0.95 and _saturation(r, g, b) > 0.18
+
+
+def _is_silver_pixel(r: float, g: float, b: float) -> bool:
+    lum = _luminance(r, g, b)
+    sat = _saturation(r, g, b)
+    return lum > 120 and lum < 220 and sat < 0.15
 
 
 def _is_table_pixel(r: float, g: float, b: float) -> bool:
     lum = _luminance(r, g, b)
-    return lum > 190 and _saturation(r, g, b) < 0.12
+    return lum > 200 and _saturation(r, g, b) < 0.1
 
 
 def _sample_region_stats(image_rgb: np.ndarray) -> dict[str, float]:
@@ -50,11 +56,11 @@ def _sample_region_stats(image_rgb: np.ndarray) -> dict[str, float]:
 
 
 def _has_red_bull_branding(stats: dict[str, float]) -> bool:
-    if stats["red_ratio"] < 0.025 or stats["blue_ratio"] < 0.025:
+    if stats["red_ratio"] < 0.015 or stats["blue_ratio"] < 0.015:
         return False
-    if stats["dark_ratio"] > 0.5 and stats["mean_luminance"] < 70:
+    if stats["dark_ratio"] > 0.6 and stats["mean_luminance"] < 55:
         return False
-    return stats["red_ratio"] + stats["blue_ratio"] >= 0.08
+    return stats["red_ratio"] + stats["blue_ratio"] >= 0.05
 
 
 def _is_black_block(stats: dict[str, float]) -> bool:
@@ -127,7 +133,7 @@ def _grow_can_from_brand_seed(
 
     seed_cx = moments["m10"] / moments["m00"]
     seed_cy = moments["m01"] / moments["m00"]
-    max_radius = max(width, height) * 0.14
+    max_radius = max(width, height) * 0.22
 
     x, y, w, h = cv2.boundingRect(seed_contour)
     region_mask = np.zeros((height, width), dtype=np.uint8)
@@ -158,8 +164,9 @@ def _grow_can_from_brand_seed(
 
             lum = float(gray[ny, nx])
             is_brand = brand_mask[ny, nx] > 0
-            is_can_body = 28 < lum < 185
-            if not is_brand and not is_can_body:
+            is_can_body = 20 < lum < 210
+            is_silver = _is_silver_pixel(r, g, b)
+            if not is_brand and not is_can_body and not is_silver:
                 continue
 
             visited[ny, nx] = 1
@@ -182,13 +189,16 @@ def _grow_can_from_brand_seed(
 
 def detect_dark_objects(
     image_rgb: np.ndarray,
-    class_name: str = "black block",
+    class_name: str = "block",
     min_area_ratio: float = 0.002,
     max_area_ratio: float = 0.35,
 ) -> list[Detection]:
     """Find objects on a bright table using contrast + color classification."""
     height, width = image_rgb.shape[:2]
     image_area = float(height * width)
+    # Low-res USB streams (e.g. 299x224) produce tiny blobs — relax minimum area.
+    if max(width, height) < 400:
+        min_area_ratio = min(min_area_ratio, 0.0008)
     min_area = image_area * min_area_ratio
     max_area = image_area * max_area_ratio
 
@@ -201,14 +211,14 @@ def detect_dark_objects(
     blue_channel = image_rgb[:, :, 2].astype(np.float32)
     brand_mask = np.zeros((height, width), dtype=np.uint8)
     brand_mask[
-        (red_channel > 110)
-        & (red_channel > green_channel * 1.35)
-        & (red_channel > blue_channel * 1.25)
+        (red_channel > 90)
+        & (red_channel > green_channel * 1.2)
+        & (red_channel > blue_channel * 1.15)
     ] = 255
     brand_mask[
-        (blue_channel > 90)
-        & (blue_channel > red_channel * 1.15)
-        & (blue_channel > green_channel * 1.05)
+        (blue_channel > 70)
+        & (blue_channel > red_channel * 1.05)
+        & (blue_channel > green_channel * 0.95)
     ] = 255
 
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -217,25 +227,7 @@ def detect_dark_objects(
     brand_clean = cv2.morphologyEx(brand_mask, cv2.MORPH_OPEN, kernel, iterations=1)
     brand_clean = cv2.morphologyEx(brand_clean, cv2.MORPH_CLOSE, kernel, iterations=2)
     brand_contours, _ = cv2.findContours(brand_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for seed in brand_contours:
-        if float(cv2.contourArea(seed)) < min_area * 0.15:
-            continue
-        contour = _grow_can_from_brand_seed(seed, image_rgb, gray, brand_mask)
-        if contour is None:
-            continue
-        x1 = max(0, int(np.min(contour[:, 0, 0])))
-        y1 = max(0, int(np.min(contour[:, 0, 1])))
-        x2 = min(width, int(np.ceil(np.max(contour[:, 0, 0]))))
-        y2 = min(height, int(np.ceil(np.max(contour[:, 0, 1]))))
-        stats = _sample_region_stats(image_rgb[y1:y2, x1:x2])
-        detection = _contour_to_detection(
-            contour,
-            image_rgb,
-            "red bull",
-            min(0.97, 0.65 + (stats["red_ratio"] + stats["blue_ratio"]) * 1.5),
-        )
-        if detection is not None:
-            detections.append(detection)
+    _ = brand_contours  # Can detection disabled — red/blue blobs were false positives on the arm.
 
     dark_clean = cv2.morphologyEx(dark_mask, cv2.MORPH_OPEN, kernel, iterations=1)
     dark_clean = cv2.morphologyEx(dark_clean, cv2.MORPH_CLOSE, kernel, iterations=2)
@@ -256,7 +248,7 @@ def detect_dark_objects(
         detection = _contour_to_detection(
             contour,
             image_rgb,
-            class_name if class_name in {"black block", "object"} else "black block",
+            class_name if class_name in {"block", "object"} else "block",
             min(0.97, 0.6 + stats["dark_ratio"] * 0.35),
         )
         if detection is None:

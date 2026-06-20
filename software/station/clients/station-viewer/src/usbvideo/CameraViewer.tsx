@@ -1,7 +1,14 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useLocalVisionDetections } from '@/hooks/useLocalVisionDetections';
+import { useManualWorkspaceCalibration } from '@/hooks/useManualWorkspaceCalibration';
+import { useVisionDetections } from '@/hooks/useVisionDetections';
 import type { LiveCameraFrame } from './live-camera-store';
 import { subscribeLiveCameraFrame } from './live-camera-store';
+import {
+  GRIPPER_TIP_LABEL,
+  MANUAL_CALIBRATION_STEP_LABELS,
+  screenToImagePoint,
+} from './manual-workspace-calibration';
 import { drawDetectionOverlay } from './vision-overlay';
 import type { VisionLatestResponse } from './vision-types';
 
@@ -51,15 +58,51 @@ const CameraViewer = memo(function CameraViewer({
   const showDetectionOverlayRef = useRef(showDetectionOverlay);
   const visionPayloadRef = useRef<VisionLatestResponse | null>(null);
   const visionErrorRef = useRef<string | null>(null);
+  const pendingPointsRef = useRef<[number, number][]>([]);
+  const calibrationModeRef = useRef<'idle' | 'corners' | 'gripper'>('idle');
 
   fitRef.current = fit;
   showDetectionOverlayRef.current = showDetectionOverlay;
 
-  const { payload: visionPayload, error: visionError } = useLocalVisionDetections(
+  const {
+    manualWorkspace,
+    calibrationMode,
+    pendingPoints,
+    nextStepLabel,
+    readyForPick,
+    startCornerCalibration,
+    startGripperCalibration,
+    cancelCalibration,
+    clearCalibration,
+    addCalibrationPoint,
+  } = useManualWorkspaceCalibration(sourceId);
+
+  calibrationModeRef.current = calibrationMode;
+  pendingPointsRef.current = pendingPoints;
+  const isCalibrating = calibrationMode !== 'idle';
+
+  const {
+    payload: remotePayload,
+    connected: remoteConnected,
+    error: remoteError,
+  } = useVisionDetections(showDetectionOverlay);
+
+  const { payload: localPayload, error: localError } = useLocalVisionDetections(
     showDetectionOverlay,
     analysisImage,
     hasImage,
+    manualWorkspace,
   );
+
+  const visionPayload = localPayload
+    ? {
+        ...localPayload,
+        workspace: manualWorkspace ?? localPayload.workspace ?? remotePayload?.workspace ?? null,
+      }
+    : remoteConnected && remotePayload
+      ? remotePayload
+      : localPayload;
+  const visionError = localError ?? remoteError;
 
   visionPayloadRef.current = visionPayload;
   visionErrorRef.current = visionError;
@@ -82,6 +125,11 @@ const CameraViewer = memo(function CameraViewer({
       return;
     }
 
+    const pendingLabels =
+      calibrationModeRef.current === 'gripper'
+        ? [GRIPPER_TIP_LABEL]
+        : MANUAL_CALIBRATION_STEP_LABELS;
+
     drawDetectionOverlay(
       canvas,
       image,
@@ -91,6 +139,10 @@ const CameraViewer = memo(function CameraViewer({
       payload?.height ?? image.naturalHeight,
       payload?.inference_fps,
       visionErrorRef.current ?? payload?.error ?? null,
+      payload?.model ?? null,
+      payload?.workspace ?? null,
+      pendingPointsRef.current,
+      pendingLabels,
     );
   }, []);
 
@@ -201,7 +253,40 @@ const CameraViewer = memo(function CameraViewer({
 
   useEffect(() => {
     redrawOverlay();
-  }, [redrawOverlay, visionPayload, visionError, showDetectionOverlay]);
+  }, [
+    redrawOverlay,
+    visionPayload,
+    visionError,
+    showDetectionOverlay,
+    calibrationMode,
+    pendingPoints,
+    manualWorkspace,
+  ]);
+
+  const handleCalibrationClick = useCallback(
+    (event: React.MouseEvent<HTMLCanvasElement>) => {
+      if (calibrationModeRef.current === 'idle' || !containerRef.current || !imageRef.current) {
+        return;
+      }
+
+      const image = imageRef.current;
+      const container = containerRef.current;
+      const point = screenToImagePoint(
+        event.clientX,
+        event.clientY,
+        container.getBoundingClientRect(),
+        container.clientWidth,
+        container.clientHeight,
+        image.naturalWidth,
+        image.naturalHeight,
+        fitRef.current,
+      );
+      if (point) {
+        addCalibrationPoint(point);
+      }
+    },
+    [addCalibrationPoint],
+  );
 
   useEffect(() => {
     if (!showDetectionOverlay) {
@@ -225,6 +310,7 @@ const CameraViewer = memo(function CameraViewer({
   }
 
   const fitClassName = fit === 'cover' ? 'object-cover' : 'object-contain';
+  const hasCorners = Boolean(manualWorkspace?.corners_xy);
 
   return (
     <div className={`overflow-hidden h-full ${className}`}>
@@ -239,10 +325,72 @@ const CameraViewer = memo(function CameraViewer({
         />
         <canvas
           ref={canvasRef}
-          className={`absolute inset-0 h-full w-full pointer-events-none ${
-            showDetectionOverlay && hasImage ? '' : 'hidden'
+          onClick={handleCalibrationClick}
+          className={`absolute inset-0 h-full w-full ${
+            showDetectionOverlay && hasImage
+              ? isCalibrating
+                ? 'cursor-crosshair pointer-events-auto'
+                : 'pointer-events-none'
+              : 'hidden'
           }`}
         />
+        {showDetectionOverlay && hasImage && (
+          <div className="absolute bottom-2 left-2 z-40 flex flex-wrap items-center gap-2 pointer-events-auto">
+            {isCalibrating ? (
+              <>
+                <span className="rounded bg-surface-secondary/90 px-2 py-1 text-xs font-mono text-accent-data">
+                  {calibrationMode === 'gripper'
+                    ? `Click ${GRIPPER_TIP_LABEL}`
+                    : `Click corner ${nextStepLabel ?? '…'} (${pendingPoints.length + 1}/4)`}
+                </span>
+                <button
+                  type="button"
+                  onClick={cancelCalibration}
+                  className="rounded bg-surface-secondary/90 px-2 py-1 text-xs text-text-primary hover:bg-surface-primary"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={startCornerCalibration}
+                  className="rounded bg-accent-data/90 px-2 py-1 text-xs font-medium text-surface-base hover:bg-accent-data"
+                >
+                  Set 4 points
+                </button>
+                {hasCorners && (
+                  <button
+                    type="button"
+                    onClick={startGripperCalibration}
+                    className={`rounded px-2 py-1 text-xs font-medium ${
+                      readyForPick
+                        ? 'bg-surface-secondary/90 text-text-primary hover:bg-surface-primary'
+                        : 'bg-amber-500/90 text-surface-base hover:bg-amber-400'
+                    }`}
+                  >
+                    Set gripper tip
+                  </button>
+                )}
+                {readyForPick && (
+                  <span className="rounded bg-emerald-600/90 px-2 py-1 text-xs font-mono text-white">
+                    Ready for pick
+                  </span>
+                )}
+                {manualWorkspace && (
+                  <button
+                    type="button"
+                    onClick={clearCalibration}
+                    className="rounded bg-surface-secondary/90 px-2 py-1 text-xs text-text-primary hover:bg-surface-primary"
+                  >
+                    Clear
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
         {!hasImage && (
           <div className="text-text-primary p-4">Waiting for USB Video data...</div>
         )}

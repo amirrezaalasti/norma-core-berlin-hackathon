@@ -1,0 +1,116 @@
+{
+  "bus_serial": "5B61037157",
+  "arm_type": "elrobot",
+  "units": "mm",
+  "planning_mode": "multi_point_2d",
+  "home_joint_positions": {
+    "1": 0.4452,
+    "2": 0.5625,
+    "3": 0.0916,
+    "4": 0.8199,
+    "5": 0.4384,
+    "6": 0.9414,
+    "7": 0.3059
+  },
+  "reference_pick_joint_positions": {
+    "1": 0.4405,
+    "2": 0.7937,
+    "3": 0.0886,
+    "4": 0.7346,
+    "5": 0.4386,
+    "6": 0.8819,
+    "7": 0.3057
+  },
+  "reference_offset_mm": [
+    118.03,
+    -17.96
+  ],
+  "reference_distance_mm": 119.39,
+  "reference_board_xy": [
+    0.72,
+    0.51
+  ],
+  "calibration_samples": [
+    {
+      "label": "reference",
+      "board_xy": [0.72, 0.51],
+      "offset_mm": [118.03, -17.96],
+      "pick_joint_positions": {
+        "1": 0.4405,
+        "2": 0.7937,
+        "3": 0.0886,
+        "4": 0.7346,
+        "5": 0.4386,
+        "6": 0.8819,
+        "7": 0.3057
+      }
+    },
+    {
+      "label": "board_0.61_0.34",
+      "board_xy": [0.61, 0.34],
+      "offset_mm": [92.74, -43.46],
+      "pick_joint_positions": {
+        "1": 0.4405,
+        "2": 0.8543,
+        "3": 0.1037,
+        "4": 0.8165,
+        "5": 0.3107,
+        "6": 0.9681,
+        "7": 0.3051
+      }
+    }
+  ],
+  "pick_scales": {
+    "1": {
+      "dx": -3.5e-05,
+      "dy": 3.4e-05
+    },
+    "2": {
+      "dx": 0.001387,
+      "dy": -0.003754
+    },
+    "3": {
+      "dx": -0.0001,
+      "dy": -0.000493
+    },
+    "4": {
+      "dx": -0.001052,
+      "dy": -0.002166
+    },
+    "5": {
+      "dx": 0.000665,
+      "dy": 0.004356
+    },
+    "6": {
+      "dx": -0.000885,
+      "dy": -0.002501
+    },
+    "7": {
+      "dx": 1e-06,
+      "dy": 2e-05
+    }
+  },
+  "gripper_home": null,
+  "gripper_pick": null,
+  "workspace": {
+    "corners_xy": [
+      [21.415977961432507, 181.1900826446281],
+      [60.129476584022036, 36.22038567493114],
+      [242.16528925619832, 34.1611570247934],
+      [270.58264462809916, 170.0702479338843]
+    ],
+    "center_xy": [148.573347107438, 105.41046831955924],
+    "width_px": 144.4490172070461,
+    "height_px": 215.7310656528827,
+    "angle_deg": -75.04832264607566,
+    "confidence": 1,
+    "origin_xy": [180.38842975206612, 137.53443526170798],
+    "calibration_source": "manual",
+    "units": "mm",
+    "plane_width": 280,
+    "plane_height": 200,
+    "tag_inset_mm": 25,
+    "gripper_tip_set": true
+  },
+  "note": "Empirical pick calibration: joint_delta ~= pick_scales.dx * offset_x_mm + pick_scales.dy * offset_y_mm from home pose."
+}
