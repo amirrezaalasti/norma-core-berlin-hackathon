@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
         default=",".join(DEFAULT_CLASSES),
         help="Comma-separated text prompts for open-vocabulary models",
     )
-    parser.add_argument("--confidence", type=float, default=0.25)
+    parser.add_argument("--confidence", type=float, default=0.1)
     parser.add_argument("--device", default=None, help="e.g. cpu, mps, cuda:0")
     return parser.parse_args()
 

@@ -82,6 +82,11 @@ export default defineConfig({
         changeOrigin: false,
         ws: true,
       },
+      '/vision': {
+        target: 'http://127.0.0.1:8890',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/vision/, ''),
+      },
     },
   },
   plugins: [

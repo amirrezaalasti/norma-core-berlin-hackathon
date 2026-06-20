@@ -77,6 +77,20 @@ uv run python scripts/run_policy.py \
     --max-delta-ticks 512
 ```
 
+To try the HuggingFace base weights (no fine-tune — quality will be limited):
+
+```bash
+uv run python scripts/run_policy.py \
+    --checkpoint lerobot/smolvla_base \
+    --task "pick up the black block" \
+    --bus-serial 5B61037157 \
+    --server localhost
+```
+
+The base repo does not ship `stats.safetensors` in norma-core format; the script
+falls back to default `[0, 1]` joint normalization with a warning. Use a
+fine-tuned checkpoint from `train.py` for real tasks.
+
 Continuous — `--auto` runs predict+send in a loop:
 
 ```bash

@@ -1,75 +1,65 @@
 # NormaCore Station Vision
 
-Pretrained object detection for robot pick-and-place — **no custom training**.
+Local object detection for the Station camera overlay and optional arm control via SmolVLA.
 
-Uses [Ultralytics YOLOE](https://docs.ultralytics.com/models/yoloe/) by default: open-vocabulary detection with text prompts plus instance segmentation. Segmentation masks are converted to oriented bounding boxes `[x, y, w, h, θ]` for gripper alignment.
+## Camera overlay (no extra server)
 
-## Prerequisites
+The Station viewer runs **local contrast vision** directly in the browser:
 
-From the repo root:
+1. Switch to **camera view**
+2. Click the **scan/search icon** in the HUD
 
-```bash
-make protobuf
-```
+No `norma-vision-live` process is required. This finds dark blocks on a bright board (like your black rectangle on white foam).
 
-Station must be running with `usb-video` enabled (see `software/station/bin/station/station.yaml`).
-
-## Install
+Rebuild the viewer after UI changes:
 
 ```bash
-uv sync --project software/station/vision
+cd software/station/bin/station && make client
 ```
 
-Model weights are **not** in git. Ultralytics downloads them on first run (~20–50 MB for `yoloe-11s-seg.pt`), or place `yoloe-11s-seg.pt` in the repo root manually.
+Restart Station, then refresh `http://localhost:8889`.
 
-Do not commit `*.pt` or other weight files.
+## SmolVLA — arm control (repo VLA)
 
-## Detect on a live camera frame
+**SmolVLA** in `software/ai/smolvla_py/` is the repo’s Vision-Language-Action model. It outputs **joint motions**, not bounding boxes, so it does not replace the overlay. Use it to move the arm:
 
 ```bash
-uv run --project software/station/vision norma-vision-detect \
-  --source station \
-  --host localhost:8888 \
-  --classes "cube,mug,rectangular box"
+cd software/ai/smolvla_py
+uv sync
+
+uv run python scripts/run_policy.py \
+  --checkpoint lerobot/smolvla_base \
+  --task "pick up the black block" \
+  --bus-serial YOUR_BUS_ID \
+  --server localhost
 ```
 
-## Detect on a local image
+Fine-tuned checkpoints work much better than the base model on your hardware. See [`software/ai/smolvla_py/README.md`](../../ai/smolvla_py/README.md).
+
+Typical stack:
+
+| Layer | Tool | Purpose |
+|-------|------|---------|
+| Where is the object? | Browser local vision (overlay) | Pixel box on camera |
+| How should the arm move? | SmolVLA `run_policy.py` | Joint commands |
+
+## Optional: Python live API (`norma-vision-live`)
+
+Only needed if you want detections from Python (e.g. MCP) instead of the in-browser overlay:
 
 ```bash
-uv run --project software/station/vision norma-vision-detect \
-  --source file \
-  --image path/to/photo.jpg \
-  --classes "yellow cube,coffee mug,box"
+uv run --project software/station/vision norma-vision-live \
+  --backend contrast \
+  --station-host localhost:8888
 ```
 
-## Model options
+Use `--backend yoloe` only if you explicitly want Ultralytics YOLOE (heavy, often misses small blocks).
 
-| Model | Type | When to use |
-|-------|------|-------------|
-| `yoloe-11s-seg.pt` (default) | Open vocab + seg | Best zero-shot; gives rotation from mask |
-| `yoloe-11m-seg.pt` | Open vocab + seg | More accurate, slower |
-| `yolov8s-worldv2.pt` | Open vocab | Lighter, no segmentation |
-| `yolo11n.pt` | COCO fixed classes | Only detects 80 COCO categories (`cup`, `bottle`, …) |
+## Troubleshooting
 
-Set via `--model` or `NORMA_VISION_MODEL`.
-
-## Output
-
-Each detection includes:
-
-- `class_name`, `confidence`
-- `bbox_xyxy` — axis-aligned box in pixels
-- `center_xy`, `size_wh`, `angle_deg` — oriented box from mask (or axis-aligned fallback)
-- `obb_xywha` — `[x, y, w, h, angle_deg]`
-
-Next step for grasping: camera calibration + hand-eye transform to map pixel `(x, y)` and `angle_deg` into the arm workspace, then IK to joint goals via Station MCP.
-
-## MCP integration
-
-With vision dependencies installed on the MCP project:
-
-```bash
-uv sync --project software/station/mcp --extra vision
-```
-
-Reload MCP in Cursor, then use the `detect_objects` tool (same text prompts as `--classes`).
+| Issue | Fix |
+|-------|-----|
+| `Vision error: Failed to fetch` | Rebuild viewer (`make client`) — overlay no longer needs port 8890 |
+| Overlay on, no box | Object must be dark on a light surface; rebuild viewer |
+| Arm doesn’t move | Use SmolVLA `run_policy.py`, not the overlay |
+| YOLO finds nothing | Expected for small blocks — use local contrast instead |

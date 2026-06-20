@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from typing import Any
-
 import numpy as np
 
+from .contrast_fallback import detect_dark_objects
 from .obb import obb_from_axis_aligned_box, obb_from_mask
+from .types import Detection
 
 DEFAULT_CLASSES = [
+    "black block",
+    "red bull",
+    "red bull can",
+    "energy drink can",
     "cube",
     "block",
     "mug",
@@ -19,45 +22,29 @@ DEFAULT_MODEL = "yoloe-11s-seg.pt"
 COCO_MODEL = "yolo11n.pt"
 
 
-@dataclass(frozen=True)
-class Detection:
-    class_name: str
-    confidence: float
-    bbox_xyxy: tuple[float, float, float, float]
-    center_xy: tuple[float, float]
-    size_wh: tuple[float, float]
-    angle_deg: float
-
-    def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        data["obb_xywha"] = [
-            self.center_xy[0],
-            self.center_xy[1],
-            self.size_wh[0],
-            self.size_wh[1],
-            self.angle_deg,
-        ]
-        return data
-
-
 class ObjectDetector:
     """Pretrained open-vocabulary detector — no custom training required.
 
     Default backend is YOLOE (segmentation + text prompts). Segmentation masks
     are converted to oriented bounding boxes via cv2.minAreaRect.
+    When YOLO finds nothing, a contrast fallback locates dark blobs on bright tables.
     """
 
     def __init__(
         self,
         model_name: str = DEFAULT_MODEL,
         classes: list[str] | None = None,
-        confidence: float = 0.25,
+        confidence: float = 0.1,
         device: str | None = None,
+        use_contrast_fallback: bool = True,
+        predict_imgsz: int = 640,
     ):
         self.model_name = model_name
         self.classes = list(classes or DEFAULT_CLASSES)
         self.confidence = confidence
         self.device = device
+        self.use_contrast_fallback = use_contrast_fallback
+        self.predict_imgsz = predict_imgsz
         self._model = None
         self._backend = self._resolve_backend(model_name)
 
@@ -87,7 +74,7 @@ class ObjectDetector:
             model.to(self.device)
 
         self._model = model
-        return model
+        return self._model
 
     def detect(self, image_rgb: np.ndarray) -> list[Detection]:
         """Run detection on an HxWx3 uint8 RGB image."""
@@ -98,12 +85,22 @@ class ObjectDetector:
         results = model.predict(
             source=image_rgb,
             conf=self.confidence,
+            imgsz=self.predict_imgsz,
             verbose=False,
         )
         if not results:
-            return []
+            detections: list[Detection] = []
+        else:
+            detections = self._parse_results(results[0], image_rgb)
 
-        result = results[0]
+        if not detections and self.use_contrast_fallback:
+            fallback_class = self.classes[0] if self.classes else "black block"
+            detections = detect_dark_objects(image_rgb, class_name=fallback_class)
+
+        detections.sort(key=lambda item: item.confidence, reverse=True)
+        return detections
+
+    def _parse_results(self, result, image_rgb: np.ndarray) -> list[Detection]:
         boxes = result.boxes
         if boxes is None or len(boxes) == 0:
             return []
@@ -139,7 +136,6 @@ class ObjectDetector:
                 )
             )
 
-        detections.sort(key=lambda item: item.confidence, reverse=True)
         return detections
 
 

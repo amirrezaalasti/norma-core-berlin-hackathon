@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 norma-vision-detect = "norma_vision.scripts.run_detect:main"
+norma-vision-live = "norma_vision.scripts.run_live_overlay:main"
 
 [build-system]
 requires = ["hatchling"]

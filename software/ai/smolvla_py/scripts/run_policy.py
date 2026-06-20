@@ -52,7 +52,7 @@ from target.gen_python.protobuf.station import commands, drivers  # noqa: E402
 
 from smolvla import SmolVLAPolicy  # noqa: E402
 from smolvla.normalize import normalize_state, unnormalize_action  # noqa: E402
-from smolvla.stats import load_stats  # noqa: E402
+from smolvla.stats import load_stats_for_inference, resolve_checkpoint_dir  # noqa: E402
 
 
 QUEUE_ID = "inference/normvla"
@@ -62,8 +62,12 @@ IMAGE_KEYS = ("observation.images.cam0", "observation.images.cam1")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--checkpoint", type=Path, required=True,
-                   help="Saved checkpoint dir with config.json, model.safetensors, stats.safetensors.")
+    p.add_argument(
+        "--checkpoint",
+        required=True,
+        help="Local checkpoint dir or HuggingFace repo id (e.g. lerobot/smolvla_base). "
+             "Fine-tuned dirs should contain stats.safetensors.",
+    )
     p.add_argument("--task", required=True,
                    help='Natural-language prompt the policy is conditioned on. '
                         'Example: --task "place the yellow cube on top of the other"')
@@ -303,15 +307,19 @@ async def main_async() -> None:
     motor_ids = [int(x) for x in args.motor_ids.split(",")]
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    action_dim = len(motor_ids)
 
-    stats_path = args.checkpoint / "stats.safetensors"
-    if not stats_path.exists():
-        raise SystemExit(f"No stats.safetensors in {args.checkpoint}.")
-    stats = {k: v.to(device) for k, v in load_stats(stats_path).items()}
+    checkpoint_dir = resolve_checkpoint_dir(args.checkpoint)
+    stats = load_stats_for_inference(
+        checkpoint_dir,
+        state_dim=action_dim,
+        action_dim=action_dim,
+        device=device,
+    )
 
-    print(f"loading {args.checkpoint} on {device} ...")
+    print(f"loading {checkpoint_dir} on {device} ...")
     policy = SmolVLAPolicy.from_pretrained(
-        args.checkpoint,
+        checkpoint_dir,
         config_overrides={"load_vlm_weights": False},
         strict=False,
     ).to(device)
