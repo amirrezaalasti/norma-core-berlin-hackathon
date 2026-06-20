@@ -10,6 +10,8 @@ import enum as enum
 class QueueDataType(enum.IntEnum):
     QDT_SYSTEM = 0
     QDT_STATION_COMMANDS = 1
+    QDT_STATION_STARTUPS = 2
+    QDT_INFERENCE_TAGS_RX = 3
     QDT_ST3215_SERIAL_TX = 10
     QDT_ST3215_SERIAL_RX = 11
     QDT_ST3215_META = 12
@@ -23,4 +25,5 @@ class QueueDataType(enum.IntEnum):
 class StationCommandType(enum.IntEnum):
     STC_ST3215_COMMAND = 0
     STC_MOTOR_MIRRORING_COMMAND = 1
+    STC_INFERENCE_TAG_COMMAND = 2
 
