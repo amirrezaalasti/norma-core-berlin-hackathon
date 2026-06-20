@@ -324,10 +324,10 @@ class StationSession:
         return result
 
     async def open_gripper(self, bus_serial: str = "auto") -> dict[str, Any]:
-        return await self.set_gripper(0.0, bus_serial)
+        return await self.set_gripper(1.0, bus_serial)
 
     async def close_gripper(self, bus_serial: str = "auto") -> dict[str, Any]:
-        return await self.set_gripper(1.0, bus_serial)
+        return await self.set_gripper(0.0, bus_serial)
 
     async def enable_arm_torque(self, bus_serial: str = "auto") -> dict[str, Any]:
         _, bus, _profile = self._resolve_bus(bus_serial)
