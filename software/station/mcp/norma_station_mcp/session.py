@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
 from typing import Any
 
+from . import kinematics
 from .arm_model import ArmProfile, annotate_motor, detect_arm_profile, motor_role
 from .motor_state import (
     find_bus,
@@ -30,6 +32,12 @@ except ImportError as exc:
 
 def _station_host() -> str:
     return os.environ.get("STATION_HOST", "localhost:8888")
+
+
+# Temporary testing safety cap -- remove or raise once movement direction/magnitude has
+# been verified against real hardware (see kinematics.py module docstring for the
+# unverified normalized<->radians calibration assumption this guards against).
+TESTING_MAX_MOVE_DELTA_M = 0.05
 
 
 class StationSession:
@@ -338,6 +346,150 @@ class StationSession:
         _, bus, _profile = self._resolve_bus(bus_serial)
         motor_ids = [m.get_id() for m in (bus.get_motors() or [])]
         return await self.set_torque(motor_ids, False, bus_serial)
+
+    def _require_elrobot(self, profile: ArmProfile) -> None:
+        if profile.name != "elrobot":
+            raise RuntimeError(
+                f"Cartesian/IK control is only supported for ElRobot; detected arm is {profile.label}"
+            )
+
+    async def move_to_xyz(
+        self,
+        target_xyz: list[float] | tuple[float, float, float],
+        bus_serial: str = "auto",
+    ) -> dict[str, Any]:
+        """Move the gripper to a Cartesian point via inverse kinematics.
+
+        target_xyz: [x, y, z] in meters, in the robot's base_link frame (see
+        kinematics.py module docstring for the frame/calibration caveats). ElRobot
+        only -- raises if the detected arm has no IK chain (e.g. SO-101).
+
+        Capped by TESTING_MAX_MOVE_DELTA_M: rejects (before solving IK or sending any
+        motor command) a target more than that far from the gripper's current position.
+        Temporary guardrail while the normalized<->radians calibration mapping is
+        unverified against real hardware -- raise or remove once it's confirmed.
+        """
+        await self.ensure_connected()
+        await self.wait_for_inference()
+        resolved_serial, _, profile = self._resolve_bus(bus_serial)
+        self._require_elrobot(profile)
+
+        target = [float(v) for v in target_xyz]
+        current = await self.get_gripper_xyz(resolved_serial)
+        delta_m = math.dist(current["xyz"], target)
+        if delta_m > TESTING_MAX_MOVE_DELTA_M:
+            raise RuntimeError(
+                f"Refusing move: target {target} is {delta_m:.3f} m from the current "
+                f"gripper position {current['xyz']}, exceeding the temporary testing "
+                f"limit of {TESTING_MAX_MOVE_DELTA_M} m. Raise TESTING_MAX_MOVE_DELTA_M "
+                "in session.py once movement direction/magnitude has been verified on "
+                "real hardware."
+            )
+
+        joint_rad = kinematics.solve_ik(target)
+        normalized = kinematics.joint_rad_dict_to_normalized(joint_rad)
+        result = await self.move_motors_normalized(normalized, resolved_serial)
+        result["target_xyz"] = target
+        result["joint_rad"] = joint_rad
+        return result
+
+    async def get_gripper_xyz(self, bus_serial: str = "auto") -> dict[str, Any]:
+        """Read the gripper's current Cartesian position (meters, base_link frame) via
+        forward kinematics from the arm's current joint positions. ElRobot only.
+        """
+        await self.ensure_connected()
+        await self.wait_for_inference()
+        arm_state = self.get_arm_state(bus_serial)
+        if arm_state["arm_type"] != "elrobot":
+            raise RuntimeError(
+                "Cartesian/IK control is only supported for ElRobot; "
+                f"detected arm is {arm_state['arm_label']}"
+            )
+
+        joint_rad: dict[int, float] = {}
+        for joint in arm_state["joints"]:
+            motor_id = joint["motor_id"]
+            if "present_position_normalized" not in joint:
+                raise RuntimeError(
+                    f"Motor {motor_id} is not calibrated (no range_min/range_max); "
+                    "cannot compute gripper position"
+                )
+            joint_rad[motor_id] = kinematics.normalized_to_radians(
+                joint["present_position_normalized"], motor_id
+            )
+
+        xyz = kinematics.forward_kinematics(joint_rad)
+        return {
+            "bus_serial": arm_state["bus_serial"],
+            "xyz": list(xyz),
+            "joint_rad": joint_rad,
+        }
+
+    async def pick_at_xyz(
+        self,
+        target_xyz: list[float],
+        *,
+        approach_height_m: float = 0.05,
+        bus_serial: str = "auto",
+    ) -> dict[str, Any]:
+        """Pick up an object at a Cartesian point: open the gripper, approach from
+        approach_height_m above the target, descend, close the gripper, then retreat
+        back up to the approach height. ElRobot only. Raises immediately on any step's
+        failure -- no partial-completion recovery.
+        """
+        await self.ensure_connected()
+        await self.wait_for_inference()
+        resolved_serial, _, profile = self._resolve_bus(bus_serial)
+        self._require_elrobot(profile)
+
+        x, y, z = (float(v) for v in target_xyz)
+        above = [x, y, z + approach_height_m]
+
+        steps = [
+            ("open_gripper", await self.open_gripper(resolved_serial)),
+            ("approach", await self.move_to_xyz(above, resolved_serial)),
+            ("descend", await self.move_to_xyz([x, y, z], resolved_serial)),
+            ("close_gripper", await self.close_gripper(resolved_serial)),
+            ("retreat", await self.move_to_xyz(above, resolved_serial)),
+        ]
+        return {
+            "target_xyz": [x, y, z],
+            "approach_height_m": approach_height_m,
+            "steps": [{"step": name, "result": result} for name, result in steps],
+        }
+
+    async def place_at_xyz(
+        self,
+        target_xyz: list[float],
+        *,
+        approach_height_m: float = 0.05,
+        bus_serial: str = "auto",
+    ) -> dict[str, Any]:
+        """Place a held object at a Cartesian point: approach from approach_height_m
+        above the target, descend, open the gripper to release, then retreat back up
+        to the approach height. Assumes the gripper is already holding something (e.g.
+        after pick_at_xyz). ElRobot only. Raises immediately on any step's failure --
+        no partial-completion recovery.
+        """
+        await self.ensure_connected()
+        await self.wait_for_inference()
+        resolved_serial, _, profile = self._resolve_bus(bus_serial)
+        self._require_elrobot(profile)
+
+        x, y, z = (float(v) for v in target_xyz)
+        above = [x, y, z + approach_height_m]
+
+        steps = [
+            ("approach", await self.move_to_xyz(above, resolved_serial)),
+            ("descend", await self.move_to_xyz([x, y, z], resolved_serial)),
+            ("open_gripper", await self.open_gripper(resolved_serial)),
+            ("retreat", await self.move_to_xyz(above, resolved_serial)),
+        ]
+        return {
+            "target_xyz": [x, y, z],
+            "approach_height_m": approach_height_m,
+            "steps": [{"step": name, "result": result} for name, result in steps],
+        }
 
     async def move_motor_steps(
         self,

@@ -187,6 +187,24 @@ Recommended order:
 
 Positions are **normalized 0.0–1.0** within each motor's calibrated range, not Cartesian XYZ.
 
+### Cartesian / IK control (ElRobot only)
+
+For tasks that hand off a target position as `[x, y, z]` (meters) instead of per-joint
+values:
+
+1. **`move_gripper_to_xyz`** — solve inverse kinematics and move the gripper to a point.
+2. **`get_gripper_xyz`** — read the gripper's current Cartesian position (forward kinematics).
+3. **`pick_at_xyz`** / **`place_at_xyz`** — composite pick/place: open/approach/descend/
+   close-or-open/retreat.
+
+Coordinates are in the robot's `base_link` frame, in meters — IK is solved against
+[`hardware/elrobot/simulation/elrobot_follower.urdf`](../../../hardware/elrobot/simulation/elrobot_follower.urdf).
+If a coordinate comes from a camera, it must already be transformed into `base_link`
+before calling these tools — hand-eye calibration is not handled here. These tools only
+work on ElRobot (no IK chain exists for SO-101) and assume normalized 0.0/1.0 line up
+with each joint's URDF angle limits — unverified until tested against the physical arm
+(see `norma_station_mcp/kinematics.py` module docstring for details).
+
 ---
 
 ## 6. Stop station

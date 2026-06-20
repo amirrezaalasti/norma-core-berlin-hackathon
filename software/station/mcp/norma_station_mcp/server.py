@@ -18,9 +18,12 @@ mcp = FastMCP(
         "- get_arm_state: read joints + gripper with roles\n"
         "- move_joint / move_arm_pose: joint-space motion (0.0-1.0 per joint)\n"
         "- open_gripper / close_gripper / set_gripper: gripper control\n"
-        "- enable_arm_torque / disable_arm_torque: power all motors\n\n"
+        "- enable_arm_torque / disable_arm_torque: power all motors\n"
+        "- move_gripper_to_xyz / pick_at_xyz / place_at_xyz: Cartesian (XYZ, meters, "
+        "base_link frame) control via inverse kinematics -- ElRobot only. "
+        "get_gripper_xyz reads current XYZ.\n\n"
         "Joint ids match motor ids (SO-101: joints 1-5, gripper 6; ElRobot: joints 1-7, gripper 8).\n"
-        "Positions are normalized within each motor's calibrated range, not Cartesian XYZ.\n"
+        "Joint-space positions are normalized 0.0-1.0 per motor; Cartesian tools take XYZ meters instead.\n"
         "Low-level advanced_* tools exist for debugging."
     ),
 )
@@ -126,6 +129,75 @@ async def disable_arm_torque(bus_serial: str = "auto") -> str:
     """Disable torque on all motors (arm goes limp — use with care)."""
     session = get_session()
     return _json(await session.disable_arm_torque(bus_serial))
+
+
+# ── Arm motion (Cartesian / IK) ────────────────────────────────────────────────
+
+
+@mcp.tool
+async def move_gripper_to_xyz(target_xyz: list[float], bus_serial: str = "auto") -> str:
+    """Move the gripper to a Cartesian point [x, y, z] in meters using inverse kinematics.
+
+    ElRobot only (7-DOF arm). Coordinates are in the robot's base_link frame -- if you
+    got this point from a camera/vision system, it must already be transformed into
+    base_link coordinates (hand-eye calibration is not handled by this server). Solves
+    IK and moves all 7 arm joints in one motion; does not touch the gripper open/close
+    state.
+    """
+    session = get_session()
+    return _json(await session.move_to_xyz(target_xyz, bus_serial))
+
+
+@mcp.tool
+async def get_gripper_xyz(bus_serial: str = "auto") -> str:
+    """Read the gripper's current Cartesian position [x, y, z] in meters (base_link frame).
+
+    Computed via forward kinematics from the arm's current joint positions. ElRobot only.
+    """
+    session = get_session()
+    return _json(await session.get_gripper_xyz(bus_serial))
+
+
+@mcp.tool
+async def pick_at_xyz(
+    target_xyz: list[float],
+    approach_height_m: float = 0.05,
+    bus_serial: str = "auto",
+) -> str:
+    """Pick up an object at Cartesian point [x, y, z] (meters, base_link frame).
+
+    Composite motion: open gripper, approach from approach_height_m above the target,
+    descend to the target, close the gripper, then retreat back up to the approach
+    height. ElRobot only. Use get_gripper_xyz / move_gripper_to_xyz for finer-grained
+    control.
+    """
+    session = get_session()
+    return _json(
+        await session.pick_at_xyz(
+            target_xyz, approach_height_m=approach_height_m, bus_serial=bus_serial
+        )
+    )
+
+
+@mcp.tool
+async def place_at_xyz(
+    target_xyz: list[float],
+    approach_height_m: float = 0.05,
+    bus_serial: str = "auto",
+) -> str:
+    """Place a held object at Cartesian point [x, y, z] (meters, base_link frame).
+
+    Composite motion: approach from approach_height_m above the target, descend to the
+    target, open the gripper to release, then retreat back up to the approach height.
+    Assumes the gripper is already holding something (e.g. after pick_at_xyz). ElRobot
+    only.
+    """
+    session = get_session()
+    return _json(
+        await session.place_at_xyz(
+            target_xyz, approach_height_m=approach_height_m, bus_serial=bus_serial
+        )
+    )
 
 
 # ── Advanced / low-level ─────────────────────────────────────────────────────
