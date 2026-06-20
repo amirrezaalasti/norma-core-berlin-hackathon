@@ -18,7 +18,8 @@ mcp = FastMCP(
         "- get_arm_state: read joints + gripper with roles\n"
         "- move_joint / move_arm_pose: joint-space motion (0.0-1.0 per joint)\n"
         "- open_gripper / close_gripper / set_gripper: gripper control\n"
-        "- enable_arm_torque / disable_arm_torque: power all motors\n\n"
+        "- enable_arm_torque / disable_arm_torque: power all motors\n"
+        "- detect_objects: pretrained YOLOE detection (requires vision extra)\n\n"
         "Joint ids match motor ids (SO-101: joints 1-5, gripper 6; ElRobot: joints 1-7, gripper 8).\n"
         "Positions are normalized within each motor's calibrated range, not Cartesian XYZ.\n"
         "Low-level advanced_* tools exist for debugging."
@@ -126,6 +127,34 @@ async def disable_arm_torque(bus_serial: str = "auto") -> str:
     """Disable torque on all motors (arm goes limp — use with care)."""
     session = get_session()
     return _json(await session.disable_arm_torque(bus_serial))
+
+
+# ── Vision (pretrained YOLOE / YOLO) ────────────────────────────────────────
+
+
+@mcp.tool
+async def detect_objects(
+    classes: list[str] | None = None,
+    camera_index: int = 0,
+    confidence: float = 0.25,
+) -> str:
+    """Detect objects in the latest station camera frame using a pretrained model.
+
+    No custom training — uses YOLOE with text prompts (default model: yoloe-11s-seg.pt).
+    Returns pixel coordinates and oriented boxes [x, y, w, h, angle_deg] when masks
+    are available. Install vision deps: uv sync --project software/station/mcp --extra vision
+
+    Example classes: ["cube", "mug", "rectangular box"]
+    """
+    from .vision_bridge import DEFAULT_CLASSES, detect_from_station
+
+    requested = classes or DEFAULT_CLASSES
+    payload = await detect_from_station(
+        classes=requested,
+        camera_index=camera_index,
+        confidence=confidence,
+    )
+    return _json(payload)
 
 
 # ── Advanced / low-level ─────────────────────────────────────────────────────

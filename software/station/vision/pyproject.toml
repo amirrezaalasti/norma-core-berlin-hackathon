@@ -1,14 +1,9 @@
 [project]
-name = "norma-station-mcp"
+name = "norma-vision"
 version = "0.1.0"
-description = "MCP server for NormaCore Station — control robots and read sensor state from AI assistants"
+description = "Pretrained open-vocabulary object detection for NormaCore Station cameras"
 requires-python = ">=3.10"
 dependencies = [
-  "fastmcp>=2.11,<3",
-]
-
-[project.optional-dependencies]
-vision = [
   "ultralytics>=8.3.0",
   "opencv-python-headless>=4.8.0",
   "numpy>=1.24.0",
@@ -17,11 +12,14 @@ vision = [
 ]
 
 [project.scripts]
-norma-station-mcp = "norma_station_mcp.server:main"
+norma-vision-detect = "norma_vision.scripts.run_detect:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["norma_station_mcp"]
+packages = ["norma_vision"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
