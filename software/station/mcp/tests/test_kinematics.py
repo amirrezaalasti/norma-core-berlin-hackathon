@@ -11,16 +11,22 @@ import pytest
 
 from norma_station_mcp import kinematics
 
-HOME_POSE_XYZ = (0.002925, 0.259566, 0.218892)
+# XYZ of the all-zero-radians pose, expressed relative to kinematics.HOME_JOINT_RAD (the
+# actual Cartesian origin -- see kinematics.py's "Origin/home convention"). All-zero-radians
+# is not itself home; it sits inside a self-collision discovered on the physical arm.
+ALL_ZERO_RAD_XYZ = (-0.0031967, 0.0897981, 0.1092725)
 
-# A handful of points spanning the workspace, all within the arm's ~0.35m reach.
+# A handful of points spanning the workspace, all within ~0.15m of the new origin
+# (HOME_JOINT_RAD -- see kinematics.py's "Origin/home convention"). Smaller-magnitude
+# than the old all-zero-origin fixture since the new origin sits ~0.2m from the old one,
+# inside the arm's ~0.35m total reach budget.
 WORKSPACE_POINTS = [
-    (0.15, 0.05, 0.25),
-    (0.05, 0.20, 0.10),
-    (0.10, -0.10, 0.20),
-    (0.0, 0.25, 0.05),
-    (0.08, 0.08, 0.30),
-    (-0.05, 0.15, 0.15),
+    (0.10, 0.05, 0.10),
+    (0.05, 0.10, 0.05),
+    (0.05, -0.05, 0.10),
+    (0.0, 0.10, 0.0),
+    (0.05, 0.05, 0.12),
+    (-0.05, 0.08, 0.05),
 ]
 
 
@@ -34,12 +40,17 @@ def test_chain_active_indices():
 
 
 def test_home_pose_forward_kinematics():
+    xyz = kinematics.forward_kinematics(kinematics.HOME_JOINT_RAD)
+    assert np.allclose(xyz, kinematics.HOME_POSE_XYZ, atol=1e-4)
+
+
+def test_all_zero_radians_forward_kinematics():
     xyz = kinematics.forward_kinematics({i: 0.0 for i in range(1, 8)})
-    assert np.allclose(xyz, HOME_POSE_XYZ, atol=1e-4)
+    assert np.allclose(xyz, ALL_ZERO_RAD_XYZ, atol=1e-4)
 
 
 def test_forward_kinematics_defaults_missing_joints_to_zero():
-    assert np.allclose(kinematics.forward_kinematics({}), HOME_POSE_XYZ, atol=1e-4)
+    assert np.allclose(kinematics.forward_kinematics({}), ALL_ZERO_RAD_XYZ, atol=1e-4)
 
 
 @pytest.mark.parametrize("target", WORKSPACE_POINTS)
@@ -114,7 +125,7 @@ def test_unknown_motor_id_raises():
 
 
 def test_joint_rad_dict_to_normalized():
-    joint_rad = kinematics.solve_ik((0.15, 0.05, 0.25))
+    joint_rad = kinematics.solve_ik((0.10, 0.05, 0.10))
     normalized = kinematics.joint_rad_dict_to_normalized(joint_rad)
     assert set(normalized) == set(joint_rad)
     for motor_id, value in normalized.items():
@@ -137,7 +148,7 @@ def test_normalized_to_steps_compatibility():
     without needing a live Station."""
     from norma_station_mcp.motor_state import normalized_to_steps
 
-    joint_rad = kinematics.solve_ik((0.15, 0.05, 0.25))
+    joint_rad = kinematics.solve_ik((0.10, 0.05, 0.10))
     normalized = kinematics.joint_rad_dict_to_normalized(joint_rad)
     for position in normalized.values():
         steps = normalized_to_steps(position, range_min=100, range_max=4000)

@@ -26,6 +26,15 @@ range_max in motor_state.py, sourced from the servo's own MIN_ANGLE_LIMIT/MAX_AN
 EEPROM registers). This cannot be checked without the physical arm. Verify once hardware
 is available by commanding two well-separated targets via move_to_xyz and confirming the
 gripper lands in the right place, not just that it moves.
+
+Origin/home convention: `(0, 0, 0)` is NOT the URDF's literal base_link origin (that would
+be the all-joints-at-0-rad pose, which on the real arm turned out to sit inside a physical
+self-collision near joints 2/3 -- never actually reachable). `HOME_JOINT_RAD` below is an
+empirically-verified, obstruction-free resting pose found by hand on the physical hardware,
+and every Cartesian coordinate this module returns or accepts is relative to that pose's
+gripper position via a fixed translation offset (`_home_offset_xyz`). `forward_kinematics`
+and `solve_ik` apply this offset internally; nothing in the chain construction or URDF
+changes, only where the public (0, 0, 0) is anchored.
 """
 
 from __future__ import annotations
@@ -47,6 +56,20 @@ _ACTIVE_LINK_INDEX_BY_MOTOR: dict[int, int] = {1: 2, 2: 4, 3: 6, 4: 8, 5: 10, 6:
 _TIP_CHAIN_LENGTH = 15
 
 IK_POSITION_TOLERANCE_M = 0.005
+
+# Empirically-verified, obstruction-free resting pose (found by hand on the physical
+# ElRobot, 2026-06-20) -- see the module docstring's "Origin/home convention" note. This
+# replaces the all-zero-radians pose as both the Cartesian origin and the default IK seed.
+HOME_JOINT_RAD: dict[int, float] = {
+    1: -0.0496288,
+    2: -1.5767316,
+    3: 1.6155414,
+    4: 0.0774959,
+    5: -0.0040240,
+    6: -0.1004396,
+    7: -2.4506225,
+}
+HOME_POSE_XYZ: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
 def _build_elrobot_chain() -> Chain:
@@ -91,14 +114,31 @@ def _full_vector_from_joint_rad(joint_rad: dict[int, float]) -> list[float]:
     return vector
 
 
-def forward_kinematics(joint_rad: dict[int, float]) -> tuple[float, float, float]:
-    """Gripper-base XYZ (meters, base_link frame) for the given joint angles.
-
-    joint_rad is keyed by motor id 1-7; missing keys default to 0.0 radians.
-    """
+def _raw_forward_kinematics(joint_rad: dict[int, float]) -> tuple[float, float, float]:
+    """URDF base_link-frame XYZ, with no home-pose offset applied. Internal only --
+    callers want forward_kinematics(), which is relative to HOME_JOINT_RAD."""
     vector = _full_vector_from_joint_rad(joint_rad)
     transform = get_elrobot_chain().forward_kinematics(vector)
     return tuple(float(v) for v in transform[:3, 3])
+
+
+@functools.lru_cache(maxsize=1)
+def _home_offset_xyz() -> tuple[float, float, float]:
+    """Raw URDF-frame XYZ of HOME_JOINT_RAD -- the translation subtracted from every
+    forward_kinematics result (and added to every solve_ik target) so HOME_JOINT_RAD
+    maps to HOME_POSE_XYZ (0, 0, 0)."""
+    return _raw_forward_kinematics(HOME_JOINT_RAD)
+
+
+def forward_kinematics(joint_rad: dict[int, float]) -> tuple[float, float, float]:
+    """Gripper-base XYZ (meters, relative to HOME_JOINT_RAD -- see module docstring's
+    "Origin/home convention") for the given joint angles.
+
+    joint_rad is keyed by motor id 1-7; missing keys default to 0.0 radians.
+    """
+    raw = _raw_forward_kinematics(joint_rad)
+    offset = _home_offset_xyz()
+    return tuple(r - o for r, o in zip(raw, offset))
 
 
 def _validate_target_xyz(target_xyz: Any) -> np.ndarray:
@@ -121,9 +161,12 @@ def solve_ik(
 
     Parameters
     ----------
-    target_xyz: [x, y, z] in meters, in the URDF's base_link frame.
+    target_xyz: [x, y, z] in meters, relative to HOME_JOINT_RAD (see module docstring's
+        "Origin/home convention" -- this is not the URDF's literal base_link origin).
     initial_joint_rad: optional optimizer seed, keyed by motor id 1-7 (radians).
-        Defaults to the all-zero home pose if omitted.
+        Defaults to the all-zero pose if omitted -- HOME_JOINT_RAD sits close to several
+        joints' URDF bounds, which makes it an unreliable optimizer seed even though it's
+        the Cartesian origin; all-zero is a more central, robustly-converging default.
     tolerance_m: max acceptable distance between the solved pose's FK position and
         target_xyz before this raises.
 
@@ -142,11 +185,14 @@ def solve_ik(
     chain = get_elrobot_chain()
     initial_vector = _full_vector_from_joint_rad(initial_joint_rad or {})
 
+    raw_target = target + np.array(_home_offset_xyz())
+
     # ikpy's inverse_kinematics never raises for unreachable targets -- it just returns
     # its best-effort result with a large residual, so the FK-of-solution check below is
     # mandatory, not a nice-to-have.
-    solution = chain.inverse_kinematics(target, initial_position=initial_vector)
-    fk = np.array(chain.forward_kinematics(solution)[:3, 3])
+    solution = chain.inverse_kinematics(raw_target, initial_position=initial_vector)
+    raw_fk = np.array(chain.forward_kinematics(solution)[:3, 3])
+    fk = raw_fk - np.array(_home_offset_xyz())
     residual = float(np.linalg.norm(fk - target))
     if residual > tolerance_m:
         raise RuntimeError(

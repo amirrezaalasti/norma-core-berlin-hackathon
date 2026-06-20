@@ -3,3 +3,5 @@
 __pycache__
 # Local vendored JS package tarballs for offline installs.
 js-vendor/
+# Station's runtime WAL/store database (default path, created on every run).
+station_data/

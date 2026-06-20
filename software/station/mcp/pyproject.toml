@@ -21,5 +21,6 @@ packages = ["norma_station_mcp"]
 
 [dependency-groups]
 dev = [
+    "matplotlib>=3.7",
     "pytest>=8",
 ]
