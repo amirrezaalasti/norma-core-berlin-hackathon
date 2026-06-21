@@ -1,5 +1,5 @@
-import type { VisionDetection, WorkspaceCalibration } from './vision-types';
-import { gripperTipFromManualWorkspace } from './workspace-detection';
+import type { GripperTipPosition, VisionDetection, WorkspaceCalibration } from './vision-types';
+import { buildWorkspaceGridCells, buildWorkspaceGridLines } from './workspace-grid';
 
 export interface ImageLayoutRect {
   x: number;
@@ -89,19 +89,84 @@ function drawObb(
   ctx.restore();
 }
 
+function drawWorkspaceGrid(
+  ctx: CanvasRenderingContext2D,
+  workspace: WorkspaceCalibration,
+  layout: ImageLayoutRect,
+) {
+  const lines = buildWorkspaceGridLines(workspace);
+  const cells = buildWorkspaceGridCells(workspace);
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.55)';
+  ctx.lineWidth = 1;
+  for (const line of lines) {
+    const [x0, y0] = mapPoint(line.from[0], line.from[1], layout);
+    const [x1, y1] = mapPoint(line.to[0], line.to[1], layout);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+  }
+
+  ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+  for (const cell of cells) {
+    const [cx, cy] = mapPoint(cell.center_pixel_xy[0], cell.center_pixel_xy[1], layout);
+    const label = String(cell.square_id);
+    const textWidth = ctx.measureText(label).width;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
+    ctx.fillRect(cx - textWidth / 2 - 4, cy - 8, textWidth + 8, 16);
+    ctx.fillStyle = 'rgba(226, 232, 240, 0.95)';
+    ctx.fillText(label, cx - textWidth / 2, cy + 4);
+  }
+  ctx.restore();
+}
+
+function drawDetectedGripperTip(
+  ctx: CanvasRenderingContext2D,
+  gripperTip: GripperTipPosition,
+  layout: ImageLayoutRect,
+  units: 'px' | 'mm' = 'mm',
+) {
+  const [px, py] = mapPoint(gripperTip.pixel_xy[0], gripperTip.pixel_xy[1], layout);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(px, py, 9, 0, Math.PI * 2);
+  ctx.fillStyle = gripperTip.source === 'roboflow' || gripperTip.source === 'detected' ? '#eab308' : '#2563eb';
+  ctx.fill();
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  const unitLabel = units === 'mm' ? 'mm' : 'px';
+  const [dx, dy] = gripperTip.offset_xy;
+  const label =
+    gripperTip.source === 'roboflow' || gripperTip.source === 'detected'
+      ? `yellow tape ${((gripperTip.confidence ?? 1) * 100).toFixed(0)}% | x:${dx.toFixed(1)} y:${dy.toFixed(1)}${unitLabel}`
+      : `gripper tip | x:${dx.toFixed(1)} y:${dy.toFixed(1)}${unitLabel}`;
+  ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+  const textWidth = ctx.measureText(label).width;
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+  ctx.fillRect(px + 10, py - 10, textWidth + 8, 16);
+  ctx.fillStyle = gripperTip.source === 'roboflow' || gripperTip.source === 'detected' ? '#fde047' : '#60a5fa';
+  ctx.fillText(label, px + 14, py + 2);
+  ctx.restore();
+}
+
 function drawWorkspace(
   ctx: CanvasRenderingContext2D,
   workspace: WorkspaceCalibration,
   layout: ImageLayoutRect,
 ) {
   const corners = workspace.corners_xy.map(([x, y]) => mapPoint(x, y, layout));
-  const originPoint = workspace.origin_xy ?? workspace.center_xy;
-  const [originX, originY] = mapPoint(originPoint[0], originPoint[1], layout);
   const isApriltag = workspace.calibration_source === 'apriltag';
   const isMarkers = workspace.calibration_source === 'markers';
   const isBlueDots = workspace.calibration_source === 'blue_dots';
   const isManual = workspace.calibration_source === 'manual';
   const isCamera = workspace.calibration_source === 'camera';
+  const boardCenter = workspace.center_xy;
+  const originPoint = isManual ? boardCenter : (workspace.origin_xy ?? boardCenter);
+  const [originX, originY] = mapPoint(originPoint[0], originPoint[1], layout);
   const isFiducial = isApriltag || isMarkers || isBlueDots || isManual || isCamera;
   const isGripper = workspace.calibration_source === 'gripper';
 
@@ -117,6 +182,10 @@ function drawWorkspace(
   ctx.setLineDash(isFiducial ? [] : [8, 4]);
   ctx.stroke();
   ctx.setLineDash([]);
+
+  if (isManual || isApriltag || isBlueDots || isMarkers || isCamera) {
+    drawWorkspaceGrid(ctx, workspace, layout);
+  }
 
   if (isFiducial) {
     const tagLabels = ['TL', 'TR', 'BR', 'BL'];
@@ -169,36 +238,28 @@ function drawWorkspace(
   ctx.fillText('+y', yEnd[0] + 4, yEnd[1] + 4);
 
   const family = workspace.tag_family ? ` ${workspace.tag_family}` : '';
-  const hasGripperOrigin = isManual
-    ? workspace.gripper_tip_set === true
-    : isApriltag || isBlueDots || isMarkers || isGripper;
 
   ctx.beginPath();
   ctx.arc(originX, originY, 7, 0, Math.PI * 2);
-  ctx.fillStyle = isManual && !hasGripperOrigin ? '#f59e0b' : isFiducial ? '#2563eb' : isGripper ? '#38bdf8' : '#3b82f6';
+  ctx.fillStyle = isManual ? '#2563eb' : isFiducial ? '#2563eb' : isGripper ? '#38bdf8' : '#3b82f6';
   ctx.fill();
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  if (isManual && hasGripperOrigin) {
-    const tip = gripperTipFromManualWorkspace(workspace);
-    if (tip?.board_xy) {
-      const unitLabel = workspace.units === 'mm' ? 'mm' : 'px';
-      const tipLabel = `tip (${tip.board_xy[0].toFixed(2)}, ${tip.board_xy[1].toFixed(2)}) | x:0.0 y:0.0 d:0.0${unitLabel}`;
-      ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
-      const tipTextWidth = ctx.measureText(tipLabel).width;
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
-      ctx.fillRect(originX + 10, originY - 10, tipTextWidth + 8, 16);
-      ctx.fillStyle = '#60a5fa';
-      ctx.fillText(tipLabel, originX + 14, originY + 2);
-    }
+  if (isManual) {
+    const unitLabel = workspace.units === 'mm' ? 'mm' : 'px';
+    const centerLabel = `center (0,0)${unitLabel}`;
+    ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+    const centerTextWidth = ctx.measureText(centerLabel).width;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+    ctx.fillRect(originX + 10, originY - 10, centerTextWidth + 8, 16);
+    ctx.fillStyle = '#60a5fa';
+    ctx.fillText(centerLabel, originX + 14, originY + 2);
   }
 
   const label = isManual
-    ? hasGripperOrigin
-      ? `manual + gripper tip ${(workspace.confidence * 100).toFixed(0)}%`
-      : `manual 4-point (set gripper tip) ${(workspace.confidence * 100).toFixed(0)}%`
+    ? `manual 4-point center origin ${(workspace.confidence * 100).toFixed(0)}%`
     : isApriltag
       ? `apriltag origin${family} ${(workspace.confidence * 100).toFixed(0)}%`
       : isBlueDots
@@ -222,6 +283,18 @@ function drawWorkspace(
 function formatDetectionLabel(detection: VisionDetection, units: 'px' | 'mm' = 'px'): string {
   const confidence = `${(detection.confidence * 100).toFixed(0)}%`;
   const unitLabel = units === 'mm' ? 'mm' : 'px';
+  if (detection.square_id != null && detection.square_local_xy != null) {
+    const [lx, ly] = detection.square_local_xy;
+    const squarePart = `sq:${detection.square_id} (${lx.toFixed(2)},${ly.toFixed(2)})`;
+    if (detection.offset_xy != null && detection.distance != null) {
+      const [dx, dy] = detection.offset_xy;
+      return `${detection.class_name} ${confidence} | ${squarePart} | x:${dx.toFixed(1)} y:${dy.toFixed(1)} d:${detection.distance.toFixed(1)}${unitLabel}`;
+    }
+    if (detection.board_xy) {
+      return `${detection.class_name} ${confidence} | ${squarePart} (${detection.board_xy[0].toFixed(2)}, ${detection.board_xy[1].toFixed(2)})`;
+    }
+    return `${detection.class_name} ${confidence} | ${squarePart}`;
+  }
   if (detection.offset_xy != null && detection.distance != null) {
     const [dx, dy] = detection.offset_xy;
     return `${detection.class_name} ${confidence} | x:${dx.toFixed(1)} y:${dy.toFixed(1)} d:${detection.distance.toFixed(1)}${unitLabel}`;
@@ -245,6 +318,7 @@ export function drawDetectionOverlay(
   workspace?: WorkspaceCalibration | null,
   pendingCalibrationPoints?: [number, number][],
   pendingCalibrationLabels?: readonly string[],
+  gripperTip?: GripperTipPosition | null,
 ) {
   const containerWidth = canvas.clientWidth;
   const containerHeight = canvas.clientHeight;
@@ -272,6 +346,10 @@ export function drawDetectionOverlay(
     drawWorkspace(ctx, workspace, layout);
   }
 
+  if (gripperTip?.pixel_xy) {
+    drawDetectedGripperTip(ctx, gripperTip, layout, workspace?.units ?? 'mm');
+  }
+
   if (pendingCalibrationPoints && pendingCalibrationPoints.length > 0) {
     pendingCalibrationPoints.forEach(([x, y], index) => {
       const [px, py] = mapPoint(x, y, layout);
@@ -289,11 +367,16 @@ export function drawDetectionOverlay(
     });
   }
 
-  const origin = workspace?.origin_xy ?? workspace?.center_xy ?? null;
+  const origin =
+    workspace?.calibration_source === 'manual'
+      ? workspace.center_xy
+      : workspace?.origin_xy ?? workspace?.center_xy ?? null;
   const classColors: Record<string, string> = {
     'block': '#22c55e',
     'box': '#22c55e',
     'cube': '#22c55e',
+    'yellow_tape': '#eab308',
+    'gripper_tip': '#eab308',
     'mug': '#38bdf8',
     'cup': '#38bdf8',
   };
@@ -335,7 +418,10 @@ export function drawDetectionOverlay(
   ctx.fillRect(8, containerHeight - 28, 360, 20);
   ctx.fillStyle = '#e2e8f0';
   ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
-  const backendLabel = modelName && modelName !== 'local-contrast' ? modelName : 'Local vision';
+  const backendLabel =
+    modelName && modelName !== 'local-contrast' && modelName !== 'local-color'
+      ? modelName
+      : 'Local color vision';
   const originLabel =
     workspace?.calibration_source === 'manual'
       ? 'manual | '

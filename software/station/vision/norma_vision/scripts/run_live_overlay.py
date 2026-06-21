@@ -4,10 +4,16 @@ import argparse
 import os
 
 from norma_vision.detector import DEFAULT_CLASSES, DEFAULT_MODEL
+from norma_vision.env_config import load_env
 from norma_vision.live_server import run_live_server
 
 
 def parse_args() -> argparse.Namespace:
+    load_env()
+    default_backend = os.environ.get("NORMA_VISION_BACKEND", "contrast").strip().lower()
+    if default_backend not in ("yolo", "contrast", "roboflow"):
+        default_backend = "contrast"
+
     parser = argparse.ArgumentParser(
         description="Run live object detection and expose overlays for Station camera view."
     )
@@ -30,9 +36,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera-index", type=int, default=0)
     parser.add_argument(
         "--backend",
-        choices=("yolo", "contrast"),
-        default="yolo",
-        help="Detection backend: 'yolo' (YOLO model, default) or 'contrast' (local dark-blob only)",
+        choices=("yolo", "contrast", "roboflow"),
+        default=default_backend,
+        help="Detection backend: roboflow (custom model), contrast (local blobs), or yolo",
     )
     parser.add_argument(
         "--model",

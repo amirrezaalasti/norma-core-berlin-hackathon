@@ -13,3 +13,4 @@ js-vendor/
 # ML model weights (downloaded locally; not versioned)
 *.pt
 mobileclip_blt.ts
+station_data/*

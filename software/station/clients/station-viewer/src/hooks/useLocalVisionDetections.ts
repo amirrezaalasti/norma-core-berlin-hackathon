@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { loadCameraCalibration, type CameraCalibrationData } from '@/usbvideo/camera-calibration';
 import { detectObjectsLocal, LOCAL_VISION_CLASSES } from '@/usbvideo/local-contrast-vision';
-import { isManualWorkspaceReady } from '@/usbvideo/manual-workspace-calibration';
-import { gripperTipFromManualWorkspace } from '@/usbvideo/workspace-detection';
 import { getVisionApiBase, type VisionDetection, type VisionLatestResponse, type WorkspaceCalibration } from '@/usbvideo/vision-types';
 
 const ANALYSIS_INTERVAL_MS = 150;
@@ -114,16 +112,14 @@ export function useLocalVisionDetections(
           useManual ? manual : null,
           useManual ? null : cameraCalibrationRef.current,
         );
-        const workspace =
-          (useManual ? manual : null) ??
-          blockResult.workspace ??
-          (apriltagWorkspaceRef.current?.calibration_source === 'apriltag'
-            ? apriltagWorkspaceRef.current
-            : null);
+        const workspace = useManual
+          ? blockResult.workspace
+          : blockResult.workspace ??
+            (apriltagWorkspaceRef.current?.calibration_source === 'apriltag'
+              ? apriltagWorkspaceRef.current
+              : null);
         const detections = blockResult.detections;
-        const gripperTip = manual && isManualWorkspaceReady(manual)
-          ? gripperTipFromManualWorkspace(manual)
-          : null;
+        const gripperTip = blockResult.gripperTip;
 
         if (detections.length > 0) {
           lastDetectionsRef.current = detections;
@@ -135,15 +131,15 @@ export function useLocalVisionDetections(
 
         let visionError: string | null = null;
         if (!workspace) {
-          visionError = "Calibrate workspace: click 'Set 4 points' then 'Set gripper tip'";
-        } else if (manual && !isManualWorkspaceReady(manual)) {
-          visionError = "Click 'Set gripper tip' on the gripper to enable pick offsets";
+          visionError = "Click 'Set 4 points' on the board corners to calibrate the workspace";
+        } else if (useManual && !gripperTip?.pixel_xy) {
+          visionError = 'Yellow tape on gripper not detected — check lighting or click Set gripper tip';
         }
 
         setPayload({
           width: image.naturalWidth,
           height: image.naturalHeight,
-          model: 'local-contrast',
+          model: 'local-color',
           classes: [...LOCAL_VISION_CLASSES],
           detection_count: lastDetectionsRef.current.length,
           detections: lastDetectionsRef.current,

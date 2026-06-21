@@ -110,9 +110,27 @@ def offset_to_joint_targets(
     arm_type: str,
     units: str = "px",
 ) -> dict[int, float]:
-    from .pick_calibration import calibration_scales_for_arm, load_pick_calibration
+    from .pick_calibration import (
+        calibration_scales_for_arm,
+        joint_targets_from_calibration_samples,
+        load_pick_calibration,
+    )
 
     calibration = load_pick_calibration()
+    if (
+        calibration is not None
+        and calibration.get("arm_type") == arm_type
+        and str(calibration.get("units") or "mm") == units
+    ):
+        home_joints = {int(k): float(v) for k, v in home["joint_positions"].items()}
+        sampled = joint_targets_from_calibration_samples(
+            home_joints,
+            offset_xy,
+            calibration,
+        )
+        if sampled is not None:
+            return sampled
+
     scales = calibration_scales_for_arm(arm_type, units=units)
     if scales is not None:
         return _joint_targets_from_scales(home, offset_xy, scales)
@@ -277,7 +295,17 @@ def pick_target_from_detection(
             else "default_scales"
         )
     )
-    return {
+
+    gripper_pick = None
+    if calibration is not None:
+        if calibration.get("planning_mode") == "static_hardcoded":
+            planning_mode = "static_hardcoded"
+            from .pick_calibration import nearest_sample_from_calibration
+            nearest = nearest_sample_from_calibration((float(offset[0]), float(offset[1])), calibration)
+            if nearest is not None and "gripper_pick" in nearest:
+                gripper_pick = nearest["gripper_pick"]
+
+    res = {
         "class_name": detection.get("class_name"),
         "confidence": detection.get("confidence"),
         "offset_xy": offset,
@@ -287,6 +315,9 @@ def pick_target_from_detection(
         "joint_targets_from_home": joint_targets,
         "home_joint_positions": home["joint_positions"],
     }
+    if gripper_pick is not None:
+        res["gripper_pick"] = gripper_pick
+    return res
 
 
 async def save_pick_reference(
@@ -408,7 +439,17 @@ async def pick_nearest_object(
     await session.open_gripper(bus_serial)
     await session.move_arm_pose(pick_plan["joint_targets_from_home"], bus_serial)
     await asyncio.sleep(settle_s)
-    await session.close_gripper(bus_serial)
+
+    gripper_pick = pick_plan.get("gripper_pick")
+    if gripper_pick is None:
+        from .pick_calibration import load_pick_calibration
+        calibration = load_pick_calibration()
+        gripper_pick = (calibration or {}).get("gripper_pick")
+
+    if gripper_pick is not None:
+        await session.set_gripper(float(gripper_pick), bus_serial)
+    else:
+        await session.close_gripper(bus_serial)
 
     result: dict[str, Any] = {
         "picked": target_detection,

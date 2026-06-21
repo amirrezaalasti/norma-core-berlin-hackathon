@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from typing import Any
 
 from .camera_calibration import get_camera_calibration
 from .contrast_fallback import detect_dark_objects
@@ -15,10 +16,32 @@ from .workspace import (
     pixel_to_board_normalized,
     pixel_to_board_offset,
 )
+from .workspace_grid import square_info_from_board_xy
 
 DEFAULT_CLASSES = ["block"]
 
 _CAMERA_MM_SOURCES = frozenset({"camera"})
+
+
+def _detection_from_enriched_payload(payload: dict[str, Any], detection: Detection) -> Detection:
+    square_center = payload.get("square_center_board_xy")
+    square_local = payload.get("square_local_xy")
+    return Detection(
+        class_name=detection.class_name,
+        confidence=detection.confidence,
+        bbox_xyxy=detection.bbox_xyxy,
+        center_xy=detection.center_xy,
+        size_wh=detection.size_wh,
+        angle_deg=detection.angle_deg,
+        board_xy=tuple(payload["board_xy"]) if payload.get("board_xy") else None,
+        offset_xy=tuple(payload["offset_xy"]) if payload.get("offset_xy") else None,
+        distance=payload.get("distance"),
+        square_id=payload.get("square_id"),
+        square_col=payload.get("square_col"),
+        square_row=payload.get("square_row"),
+        square_center_board_xy=tuple(square_center) if square_center else None,
+        square_local_xy=tuple(square_local) if square_local else None,
+    )
 
 
 def _apply_camera_mm_offsets(
@@ -105,17 +128,7 @@ def _enrich_detection(
 ) -> Detection:
     if workspace.calibration_source == "manual":
         payload = enrich_detection_with_workspace(detection.to_dict(), workspace)
-        return Detection(
-            class_name=detection.class_name,
-            confidence=detection.confidence,
-            bbox_xyxy=detection.bbox_xyxy,
-            center_xy=detection.center_xy,
-            size_wh=detection.size_wh,
-            angle_deg=detection.angle_deg,
-            board_xy=tuple(payload["board_xy"]) if payload.get("board_xy") else None,
-            offset_xy=tuple(payload["offset_xy"]) if payload.get("offset_xy") else None,
-            distance=payload.get("distance"),
-        )
+        return _detection_from_enriched_payload(payload, detection)
 
     board_xy = pixel_to_board_normalized(
         detection.center_xy[0],
@@ -131,6 +144,7 @@ def _enrich_detection(
     )
     if use_camera_mm:
         enriched_detection = _apply_camera_mm_offsets(detection, workspace, calibration)
+        square = square_info_from_board_xy(board_xy) if board_xy is not None else None
         return Detection(
             class_name=enriched_detection.class_name,
             confidence=enriched_detection.confidence,
@@ -141,6 +155,11 @@ def _enrich_detection(
             board_xy=board_xy,
             offset_xy=enriched_detection.offset_xy,
             distance=enriched_detection.distance,
+            square_id=square.square_id if square else None,
+            square_col=square.square_col if square else None,
+            square_row=square.square_row if square else None,
+            square_center_board_xy=square.square_center_board_xy if square else None,
+            square_local_xy=square.square_local_xy if square else None,
         )
 
     offset = (
@@ -154,6 +173,7 @@ def _enrich_detection(
     )
     offset_xy = offset[0] if offset is not None else None
     distance = offset[1] if offset is not None else None
+    square = square_info_from_board_xy(board_xy) if board_xy is not None else None
     return Detection(
         class_name=detection.class_name,
         confidence=detection.confidence,
@@ -164,6 +184,11 @@ def _enrich_detection(
         board_xy=board_xy,
         offset_xy=offset_xy,
         distance=distance,
+        square_id=square.square_id if square else None,
+        square_col=square.square_col if square else None,
+        square_row=square.square_row if square else None,
+        square_center_board_xy=square.square_center_board_xy if square else None,
+        square_local_xy=square.square_local_xy if square else None,
     )
 
 

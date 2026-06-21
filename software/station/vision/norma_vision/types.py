@@ -15,6 +15,11 @@ class Detection:
     board_xy: tuple[float, float] | None = None
     offset_xy: tuple[float, float] | None = None
     distance: float | None = None
+    square_id: int | None = None
+    square_col: int | None = None
+    square_row: int | None = None
+    square_center_board_xy: tuple[float, float] | None = None
+    square_local_xy: tuple[float, float] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -31,4 +36,10 @@ class Detection:
             data.pop("offset_xy", None)
         if self.distance is None:
             data.pop("distance", None)
+        if self.square_id is None:
+            data.pop("square_id", None)
+            data.pop("square_col", None)
+            data.pop("square_row", None)
+            data.pop("square_center_board_xy", None)
+            data.pop("square_local_xy", None)
         return data

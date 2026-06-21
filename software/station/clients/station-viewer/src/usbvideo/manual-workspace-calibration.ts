@@ -46,6 +46,52 @@ function pointDistance(a: [number, number], b: [number, number]): number {
   return Math.hypot(a[0] - b[0], a[1] - b[1]);
 }
 
+function scalePoint(point: [number, number], sx: number, sy: number): [number, number] {
+  return [point[0] * sx, point[1] * sy];
+}
+
+/** Scale saved corner pixels when the camera resolution differs from calibration reference size. */
+export function scaleManualWorkspaceToImage(
+  workspace: ManualWorkspacePayload,
+  imageWidth: number,
+  imageHeight: number,
+): ManualWorkspacePayload {
+  if (imageWidth <= 0 || imageHeight <= 0 || workspace.calibration_source !== 'manual') {
+    return workspace;
+  }
+
+  const refRaw = String(import.meta.env.VITE_WORKSPACE_REF_SIZE ?? '299,224');
+  const refParts = refRaw.split(',').map((part) => Number(part.trim()));
+  const refW = refParts[0] > 0 ? refParts[0] : imageWidth;
+  const refH = refParts[1] > 0 ? refParts[1] : imageHeight;
+
+  const maxX = Math.max(...workspace.corners_xy.map(([x]) => x));
+  const maxY = Math.max(...workspace.corners_xy.map(([, y]) => y));
+  const effectiveRefW = Math.max(refW, maxX * 1.08);
+  const effectiveRefH = Math.max(refH, maxY * 1.08);
+
+  if (imageWidth <= effectiveRefW * 1.15 && imageHeight <= effectiveRefH * 1.15) {
+    return workspace;
+  }
+
+  const sx = imageWidth / effectiveRefW;
+  const sy = imageHeight / effectiveRefH;
+  const corners = workspace.corners_xy.map((point) =>
+    scalePoint(point, sx, sy),
+  ) as ManualWorkspacePayload['corners_xy'];
+  const center = scalePoint(workspace.center_xy, sx, sy);
+  const origin = workspace.origin_xy ? scalePoint(workspace.origin_xy, sx, sy) : null;
+
+  return {
+    ...workspace,
+    corners_xy: corners,
+    center_xy: center,
+    origin_xy: origin,
+    width_px: workspace.width_px * sx,
+    height_px: workspace.height_px * sy,
+  };
+}
+
 export function buildManualWorkspace(
   points: [[number, number], [number, number], [number, number], [number, number]],
   gripperTip: [number, number] | null = null,

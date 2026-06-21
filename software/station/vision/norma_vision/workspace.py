@@ -496,11 +496,12 @@ def gripper_tip_position(
     if origin is None:
         return None
     board_xy = pixel_to_board_normalized(origin[0], origin[1], workspace)
+    offset = pixel_to_board_offset(origin[0], origin[1], workspace)
     return {
         "pixel_xy": [float(origin[0]), float(origin[1])],
         "board_xy": list(board_xy) if board_xy is not None else None,
-        "offset_xy": [0.0, 0.0],
-        "distance": 0.0,
+        "offset_xy": list(offset[0]) if offset is not None else [0.0, 0.0],
+        "distance": offset[1] if offset is not None else 0.0,
     }
 
 
@@ -509,18 +510,25 @@ def enrich_detection_with_workspace(
     workspace: WorkspaceCalibration,
 ) -> dict[str, Any]:
     """Attach board_xy and gripper-relative offset using manual corner homography."""
+    from .workspace_grid import square_info_from_board_xy
+
     center = detection.get("center_xy")
     if not center or len(center) < 2:
         return detection
 
     px, py = float(center[0]), float(center[1])
     board_xy = pixel_to_board_normalized(px, py, workspace)
-    can_offset = workspace.calibration_source != "manual" or workspace.gripper_tip_set
+    if workspace.calibration_source == "manual":
+        can_offset = bool(workspace.corners_xy)
+    else:
+        can_offset = workspace.calibration_source != "manual" or workspace.gripper_tip_set
     offset = pixel_to_board_offset(px, py, workspace) if can_offset else None
 
     enriched = dict(detection)
     if board_xy is not None:
         enriched["board_xy"] = list(board_xy)
+        square = square_info_from_board_xy(board_xy)
+        enriched.update(square.to_dict())
     if offset is not None:
         enriched["offset_xy"] = list(offset[0])
         enriched["distance"] = float(offset[1])
@@ -556,6 +564,12 @@ def filter_detections_in_workspace(
     return filtered
 
 
+def board_reference_pixel(workspace: WorkspaceCalibration) -> tuple[float, float]:
+    if workspace.calibration_source == "manual":
+        return workspace.center_xy
+    return workspace.origin_xy or workspace.center_xy
+
+
 def pixel_to_board_offset(
     px: float,
     py: float,
@@ -565,7 +579,7 @@ def pixel_to_board_offset(
     if obj_plane is None:
         return None
 
-    origin = workspace.origin_xy or workspace.center_xy
+    origin = board_reference_pixel(workspace)
     origin_plane = pixel_to_board_plane(origin[0], origin[1], workspace)
     if origin_plane is None:
         return None

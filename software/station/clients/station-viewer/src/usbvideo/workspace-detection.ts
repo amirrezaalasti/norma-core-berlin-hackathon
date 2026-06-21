@@ -1,5 +1,6 @@
 import type { CameraCalibrationData } from './camera-calibration';
 import { pixelOffsetMm } from './camera-calibration';
+import { enrichDetectionWithSquare } from './workspace-grid';
 import type { GripperTipPosition, VisionDetection, WorkspaceCalibration } from './vision-types';
 
 interface Point {
@@ -364,6 +365,43 @@ function solveLinearSystem(matrix: number[][], values: number[]): number[] | nul
   return augmented.map((row) => row[size]);
 }
 
+function workspaceHomographyDst(workspace: WorkspaceCalibration): [Point, Point, Point, Point] {
+  if (
+    workspace.units === 'mm' &&
+    workspace.plane_width != null &&
+    workspace.plane_height != null &&
+    workspace.tag_inset_mm != null
+  ) {
+    const inset = workspace.tag_inset_mm;
+    const boardW = workspace.plane_width;
+    const boardH = workspace.plane_height;
+    return [
+      { x: inset, y: inset },
+      { x: boardW - inset, y: inset },
+      { x: boardW - inset, y: boardH - inset },
+      { x: inset, y: boardH - inset },
+    ];
+  }
+  return [
+    { x: 0, y: 0 },
+    { x: 1, y: 0 },
+    { x: 1, y: 1 },
+    { x: 0, y: 1 },
+  ];
+}
+
+function applyHomography(homography: number[], px: number, py: number): [number, number] | null {
+  const [h0, h1, h2, h3, h4, h5, h6, h7] = homography;
+  const denominator = h6 * px + h7 * py + 1;
+  if (Math.abs(denominator) < 1e-8) {
+    return null;
+  }
+  return [
+    (h0 * px + h1 * py + h2) / denominator,
+    (h3 * px + h4 * py + h5) / denominator,
+  ];
+}
+
 function computeHomography(
   src: [Point, Point, Point, Point],
   dst: [Point, Point, Point, Point],
@@ -399,6 +437,13 @@ export function workspaceOffsetScale(workspace: WorkspaceCalibration): { x: numb
   return { x: workspace.plane_width ?? workspace.width_px, y: workspace.plane_height ?? workspace.height_px };
 }
 
+export function boardReferencePixel(workspace: WorkspaceCalibration): [number, number] {
+  if (workspace.calibration_source === 'manual') {
+    return workspace.center_xy;
+  }
+  return workspace.origin_xy ?? workspace.center_xy;
+}
+
 export function pixelToBoardOffset(
   px: number,
   py: number,
@@ -410,8 +455,7 @@ export function pixelToBoardOffset(
   }
 
   const scale = workspaceOffsetScale(workspace);
-
-  const origin = workspace.origin_xy ?? workspace.center_xy;
+  const origin = boardReferencePixel(workspace);
   const origin_board = pixelToBoardNormalized(origin[0], origin[1], workspace);
   if (!origin_board) {
     return null;
@@ -422,6 +466,25 @@ export function pixelToBoardOffset(
   return {
     offset_xy: [dx, dy],
     distance: Math.hypot(dx, dy),
+  };
+}
+
+export function gripperTipFromPixel(
+  px: number,
+  py: number,
+  workspace: WorkspaceCalibration,
+  source: GripperTipPosition['source'] = 'detected',
+  confidence?: number,
+): GripperTipPosition {
+  const board_xy = pixelToBoardNormalized(px, py, workspace);
+  const offset = pixelToBoardOffset(px, py, workspace);
+  return {
+    pixel_xy: [px, py],
+    board_xy,
+    offset_xy: offset?.offset_xy ?? [0, 0],
+    distance: offset?.distance ?? 0,
+    source,
+    confidence,
   };
 }
 
@@ -436,11 +499,13 @@ export function gripperTipFromManualWorkspace(
     return null;
   }
   const board_xy = pixelToBoardNormalized(origin[0], origin[1], workspace);
+  const offset = pixelToBoardOffset(origin[0], origin[1], workspace);
   return {
     pixel_xy: [origin[0], origin[1]],
     board_xy,
-    offset_xy: [0, 0],
-    distance: 0,
+    offset_xy: offset?.offset_xy ?? [0, 0],
+    distance: offset?.distance ?? 0,
+    source: 'manual',
   };
 }
 
@@ -482,7 +547,9 @@ export function enrichDetectionsWithWorkspace(
       workspace,
     );
     const canOffset =
-      workspace.calibration_source !== 'manual' || workspace.gripper_tip_set === true;
+      workspace.calibration_source === 'manual'
+        ? Boolean(workspace.corners_xy)
+        : workspace.gripper_tip_set === true;
 
     if (
       !useManualHomography &&
@@ -501,11 +568,21 @@ export function enrichDetectionsWithWorkspace(
           )
         : null;
       if (cameraOffset) {
+        const square = board_xy ? enrichDetectionWithSquare(board_xy) : null;
         return {
           ...detection,
           ...(board_xy ? { board_xy } : {}),
           offset_xy: cameraOffset.offset,
           distance: cameraOffset.distance,
+          ...(square
+            ? {
+                square_id: square.square_id,
+                square_col: square.square_col,
+                square_row: square.square_row,
+                square_center_board_xy: square.square_center_board_xy,
+                square_local_xy: square.square_local_xy,
+              }
+            : {}),
         };
       }
     }
@@ -513,15 +590,56 @@ export function enrichDetectionsWithWorkspace(
     const offset = canOffset
       ? pixelToBoardOffset(detection.center_xy[0], detection.center_xy[1], workspace)
       : null;
-    if (!board_xy && !offset) {
+    const square = board_xy ? enrichDetectionWithSquare(board_xy) : null;
+    if (!board_xy && !offset && !square) {
       return detection;
     }
     return {
       ...detection,
       ...(board_xy ? { board_xy } : {}),
       ...(offset ? { offset_xy: offset.offset_xy, distance: offset.distance } : {}),
+      ...(square
+        ? {
+            square_id: square.square_id,
+            square_col: square.square_col,
+            square_row: square.square_row,
+            square_center_board_xy: square.square_center_board_xy,
+            square_local_xy: square.square_local_xy,
+          }
+        : {}),
     };
   });
+}
+
+export function boardNormalizedToPixel(
+  u: number,
+  v: number,
+  workspace: WorkspaceCalibration,
+): [number, number] | null {
+  const corners = workspace.corners_xy.map(([x, y]) => ({ x, y })) as [Point, Point, Point, Point];
+  const dst = workspaceHomographyDst(workspace);
+
+  let planeX: number;
+  let planeY: number;
+  if (workspace.units === 'mm' && workspace.tag_inset_mm != null) {
+    const scale = workspaceOffsetScale(workspace);
+    planeX = workspace.tag_inset_mm + u * scale.x;
+    planeY = workspace.tag_inset_mm + v * scale.y;
+  } else {
+    planeX = u;
+    planeY = v;
+  }
+
+  const inverse = computeHomography(dst, corners);
+  if (!inverse) {
+    return null;
+  }
+
+  const mapped = applyHomography(inverse, planeX, planeY);
+  if (!mapped) {
+    return null;
+  }
+  return mapped;
 }
 
 export function pixelToBoardNormalized(
@@ -530,63 +648,38 @@ export function pixelToBoardNormalized(
   workspace: WorkspaceCalibration,
 ): [number, number] | null {
   const corners = workspace.corners_xy.map(([x, y]) => ({ x, y })) as [Point, Point, Point, Point];
-
-  let dst: [Point, Point, Point, Point];
-  if (
-    workspace.units === 'mm' &&
-    workspace.plane_width != null &&
-    workspace.plane_height != null &&
-    workspace.tag_inset_mm != null
-  ) {
-    const inset = workspace.tag_inset_mm;
-    const boardW = workspace.plane_width;
-    const boardH = workspace.plane_height;
-    dst = [
-      { x: inset, y: inset },
-      { x: boardW - inset, y: inset },
-      { x: boardW - inset, y: boardH - inset },
-      { x: inset, y: boardH - inset },
-    ];
-  } else {
-    dst = [
-      { x: 0, y: 0 },
-      { x: 1, y: 0 },
-      { x: 1, y: 1 },
-      { x: 0, y: 1 },
-    ];
-  }
+  const dst = workspaceHomographyDst(workspace);
 
   const homography = computeHomography(corners, dst);
   if (!homography) {
     return null;
   }
 
-  const [h0, h1, h2, h3, h4, h5, h6, h7] = homography;
-  const denominator = h6 * px + h7 * py + 1;
-  if (Math.abs(denominator) < 1e-8) {
+  const mapped = applyHomography(homography, px, py);
+  if (!mapped) {
     return null;
   }
 
-  const mappedX = (h0 * px + h1 * py + h2) / denominator;
-  const mappedY = (h3 * px + h4 * py + h5) / denominator;
+  const [mappedX, mappedY] = mapped;
 
   if (workspace.units === 'mm' && workspace.tag_inset_mm != null) {
     const scale = workspaceOffsetScale(workspace);
-    const u = (mappedX - workspace.tag_inset_mm) / scale.x;
-    const v = (mappedY - workspace.tag_inset_mm) / scale.y;
-    if (u < -0.05 || u > 1.05 || v < -0.05 || v > 1.05) {
+    const normalizedU = (mappedX - workspace.tag_inset_mm) / scale.x;
+    const normalizedV = (mappedY - workspace.tag_inset_mm) / scale.y;
+    if (normalizedU < -0.05 || normalizedU > 1.05 || normalizedV < -0.05 || normalizedV > 1.05) {
       return null;
     }
-    return [Math.min(1, Math.max(0, u)), Math.min(1, Math.max(0, v))];
+    return [
+      Math.min(1, Math.max(0, normalizedU)),
+      Math.min(1, Math.max(0, normalizedV)),
+    ];
   }
 
-  const u = mappedX;
-  const v = mappedY;
-  if (u < -0.05 || u > 1.05 || v < -0.05 || v > 1.05) {
+  if (mappedX < -0.05 || mappedX > 1.05 || mappedY < -0.05 || mappedY > 1.05) {
     return null;
   }
 
-  return [Math.min(1, Math.max(0, u)), Math.min(1, Math.max(0, v))];
+  return [Math.min(1, Math.max(0, mappedX)), Math.min(1, Math.max(0, mappedY))];
 }
 
 function pickFourBlueDotCorners(

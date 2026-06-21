@@ -1,7 +1,15 @@
 import type { CameraCalibrationData } from './camera-calibration';
 import { withCameraWorkspaceUnits } from './camera-calibration';
-import type { VisionDetection, WorkspaceCalibration } from './vision-types';
-import { detectWorkspace, enrichDetectionsWithWorkspace, filterDetectionsInWorkspace } from './workspace-detection';
+import { scaleManualWorkspaceToImage } from './manual-workspace-calibration';
+import type { GripperTipPosition, VisionDetection, WorkspaceCalibration } from './vision-types';
+import {
+  detectWorkspace,
+  enrichDetectionsWithWorkspace,
+  filterDetectionsInWorkspace,
+  gripperTipFromManualWorkspace,
+  gripperTipFromPixel,
+  pixelToBoardNormalized,
+} from './workspace-detection';
 
 export const LOCAL_VISION_CLASSES = ['block', 'box', 'cube'] as const;
 
@@ -248,6 +256,75 @@ function dedupeDetections(detections: VisionDetection[]): VisionDetection[] {
   return kept;
 }
 
+function isYellowTapePixel(r: number, g: number, b: number): boolean {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const sat = max > 0 ? (max - min) / max : 0;
+  return (
+    sat > 0.22 &&
+    r > 95 &&
+    g > 75 &&
+    b < 145 &&
+    r > b + 20 &&
+    g > b + 5 &&
+    (r + g) / 2 > 105
+  );
+}
+
+function isValidYellowBlob(blob: BlobBox, width: number, height: number): boolean {
+  const imageArea = width * height;
+  const area = blob.count;
+  const boxW = blob.maxX - blob.minX + 1;
+  const boxH = blob.maxY - blob.minY + 1;
+  const aspect = Math.max(boxW, boxH) / Math.max(Math.min(boxW, boxH), 1);
+  return (
+    area >= imageArea * 0.0004 &&
+    area <= imageArea * 0.08 &&
+    aspect <= 4.5
+  );
+}
+
+function detectYellowTape(
+  imageData: ImageData,
+  width: number,
+  height: number,
+  scale: number,
+  hint: [number, number] | null,
+): VisionDetection | null {
+  const yellowMask = new Uint8Array(width * height);
+  for (let i = 0; i < width * height; i += 1) {
+    const offset = i * 4;
+    const r = imageData.data[offset];
+    const g = imageData.data[offset + 1];
+    const b = imageData.data[offset + 2];
+    yellowMask[i] = isYellowTapePixel(r, g, b) ? 1 : 0;
+  }
+
+  const hintPxX = hint ? hint[0] * scale : width * 0.35;
+  const hintPxY = hint ? hint[1] * scale : height * 0.45;
+
+  const candidates = findBlobs(yellowMask, width, height)
+    .filter((blob) => isValidYellowBlob(blob, width, height))
+    .map((blob) => {
+      const centerX = (blob.minX + blob.maxX + 1) / 2;
+      const centerY = (blob.minY + blob.maxY + 1) / 2;
+      const dist = Math.hypot(centerX - hintPxX, centerY - hintPxY);
+      const leftBias = centerX < width * 0.62 ? 0 : width * 0.15;
+      return {
+        blob,
+        score: blob.count / Math.max(dist + leftBias, 1),
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const best = candidates[0];
+  if (!best) {
+    return null;
+  }
+
+  return blobToDetection(best.blob, 'yellow_tape', 0.88, scale);
+}
+
 function detectBlackBlocks(
   darkMask: Uint8Array,
   imageData: ImageData,
@@ -277,6 +354,7 @@ function detectBlackBlocks(
 export interface LocalVisionResult {
   detections: VisionDetection[];
   workspace: WorkspaceCalibration | null;
+  gripperTip: GripperTipPosition | null;
 }
 
 export function detectObjectsLocal(
@@ -287,8 +365,17 @@ export function detectObjectsLocal(
   cameraCalibration: CameraCalibrationData | null = null,
 ): LocalVisionResult {
   if (image.naturalWidth <= 0 || image.naturalHeight <= 0) {
-    return { detections: [], workspace: manualWorkspace ?? null };
+    return { detections: [], workspace: manualWorkspace ?? null, gripperTip: null };
   }
+
+  const scaledManual = manualWorkspace
+    ? scaleManualWorkspaceToImage(
+        manualWorkspace,
+        image.naturalWidth,
+        image.naturalHeight,
+      )
+    : null;
+  const hasManual = Boolean(scaledManual?.corners_xy && scaledManual.calibration_source === 'manual');
 
   const workspaceAnalysisSize = 960;
   const wsScale = Math.min(
@@ -305,24 +392,28 @@ export function detectObjectsLocal(
   const blockWidth = Math.max(1, Math.round(image.naturalWidth * blockScale));
   const blockHeight = Math.max(1, Math.round(image.naturalHeight * blockScale));
 
-  const wsCanvas = document.createElement('canvas');
-  wsCanvas.width = wsWidth;
-  wsCanvas.height = wsHeight;
-  const wsCtx = wsCanvas.getContext('2d');
-  if (!wsCtx) {
-    return { detections: [], workspace: null };
+  let workspace: WorkspaceCalibration | null = scaledManual;
+
+  if (!hasManual) {
+    const wsCanvas = document.createElement('canvas');
+    wsCanvas.width = wsWidth;
+    wsCanvas.height = wsHeight;
+    const wsCtx = wsCanvas.getContext('2d');
+    if (!wsCtx) {
+      return { detections: [], workspace: null, gripperTip: null };
+    }
+    wsCtx.drawImage(image, 0, 0, wsWidth, wsHeight);
+    const wsImageData = wsCtx.getImageData(0, 0, wsWidth, wsHeight);
+    const detectedWorkspace = detectWorkspace(wsImageData, wsWidth, wsHeight, wsScale, externalWorkspace);
+    workspace = withCameraWorkspaceUnits(detectedWorkspace, cameraCalibration);
   }
-  wsCtx.drawImage(image, 0, 0, wsWidth, wsHeight);
-  const wsImageData = wsCtx.getImageData(0, 0, wsWidth, wsHeight);
-  const detectedWorkspace = manualWorkspace ?? detectWorkspace(wsImageData, wsWidth, wsHeight, wsScale, externalWorkspace);
-  const workspace = manualWorkspace ?? withCameraWorkspaceUnits(detectedWorkspace, cameraCalibration);
 
   const blockCanvas = document.createElement('canvas');
   blockCanvas.width = blockWidth;
   blockCanvas.height = blockHeight;
   const blockCtx = blockCanvas.getContext('2d');
   if (!blockCtx) {
-    return { detections: [], workspace };
+    return { detections: [], workspace, gripperTip: null };
   }
 
   blockCtx.drawImage(image, 0, 0, blockWidth, blockHeight);
@@ -346,18 +437,71 @@ export function detectObjectsLocal(
   const centerX = blockWidth / 2;
   const centerY = blockHeight / 2;
 
-  const detections = filterDetectionsInWorkspace(
-    enrichDetectionsWithWorkspace(
-      dedupeDetections(
-        detectBlackBlocks(darkMask, imageData, blockWidth, blockHeight, blockScale, centerX, centerY),
-      ).slice(0, 4),
-      workspace,
-      manualWorkspace ? null : cameraCalibration,
-    ),
-    workspace,
+  const yellowTape = detectYellowTape(
+    imageData,
+    blockWidth,
+    blockHeight,
+    blockScale,
+    scaledManual?.origin_xy ?? null,
   );
 
-  return { detections, workspace };
+  let workingWorkspace = workspace;
+  let gripperTip: GripperTipPosition | null = null;
+
+  if (yellowTape && workingWorkspace) {
+    const origin = yellowTape.center_xy;
+    workingWorkspace = {
+      ...workingWorkspace,
+      origin_xy: origin,
+      gripper_tip_set: true,
+    };
+    gripperTip = gripperTipFromPixel(
+      origin[0],
+      origin[1],
+      workingWorkspace,
+      'detected',
+      yellowTape.confidence,
+    );
+  } else if (scaledManual?.gripper_tip_set && scaledManual.origin_xy && workingWorkspace) {
+    gripperTip = gripperTipFromManualWorkspace(workingWorkspace);
+  }
+
+  const blockDetections = dedupeDetections(
+    detectBlackBlocks(darkMask, imageData, blockWidth, blockHeight, blockScale, centerX, centerY),
+  ).slice(0, 4);
+
+  const canEnrichOffsets = Boolean(workingWorkspace && (hasManual || workingWorkspace.gripper_tip_set));
+
+  const detections = canEnrichOffsets
+    ? filterDetectionsInWorkspace(
+        enrichDetectionsWithWorkspace(
+          blockDetections,
+          workingWorkspace!,
+          hasManual ? null : cameraCalibration,
+        ),
+        workingWorkspace!,
+      )
+    : blockDetections.map((detection) => {
+        if (!workingWorkspace) {
+          return detection;
+        }
+        const board_xy = pixelToBoardNormalized(
+          detection.center_xy[0],
+          detection.center_xy[1],
+          workingWorkspace,
+        );
+        return board_xy ? { ...detection, board_xy } : detection;
+      });
+
+  let enrichedYellow = yellowTape;
+  if (yellowTape && workingWorkspace && hasManual) {
+    const [enriched] = enrichDetectionsWithWorkspace([yellowTape], workingWorkspace);
+    enrichedYellow = enriched ?? yellowTape;
+  }
+
+  const visibleDetections = enrichedYellow ? [...detections, enrichedYellow] : detections;
+
+  return { detections: visibleDetections, workspace: workingWorkspace, gripperTip };
 }
 
 /** @deprecated Use detectObjectsLocal — kept for callers that only need dark blobs. */

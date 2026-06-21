@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from .env_config import RoboflowConfig, get_roboflow_config
+from .env_config import RoboflowConfig, get_roboflow_config, _normalize_class_name
 from .types import Detection
 
 
@@ -102,7 +102,7 @@ class RoboflowDetector:
             detection = _prediction_to_detection(item)
             if detection is None:
                 continue
-            if self.config.class_filter and detection.class_name.lower() not in self.config.class_filter:
+            if self.config.class_filter and _normalize_class_name(detection.class_name) not in self.config.class_filter:
                 continue
             detections.append(detection)
 

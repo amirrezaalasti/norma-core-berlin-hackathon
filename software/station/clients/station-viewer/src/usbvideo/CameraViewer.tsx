@@ -94,15 +94,32 @@ const CameraViewer = memo(function CameraViewer({
     manualWorkspace,
   );
 
-  const visionPayload = localPayload
+  const preferRemoteRoboflow =
+    import.meta.env.VITE_VISION_PREFER_REMOTE === 'roboflow' ||
+    import.meta.env.VITE_VISION_PREFER_REMOTE === '1';
+
+  const hasManualCorners = Boolean(manualWorkspace?.corners_xy);
+  const useRemoteRoboflow =
+    preferRemoteRoboflow &&
+    remoteConnected &&
+    Boolean(remotePayload?.model?.startsWith('roboflow:')) &&
+    !hasManualCorners &&
+    (remotePayload?.detection_count ?? 0) > 0;
+
+  const visionPayload = useRemoteRoboflow && remotePayload
     ? {
-        ...localPayload,
-        workspace: manualWorkspace ?? localPayload.workspace ?? remotePayload?.workspace ?? null,
+        ...remotePayload,
+        workspace: manualWorkspace ?? remotePayload.workspace ?? null,
       }
-    : remoteConnected && remotePayload
-      ? remotePayload
-      : localPayload;
-  const visionError = localError ?? remoteError;
+    : localPayload
+      ? {
+          ...localPayload,
+          workspace: localPayload.workspace ?? manualWorkspace ?? remotePayload?.workspace ?? null,
+        }
+      : remoteConnected && remotePayload
+        ? remotePayload
+        : localPayload;
+  const visionError = useRemoteRoboflow ? remoteError ?? localError : localError ?? remoteError;
 
   visionPayloadRef.current = visionPayload;
   visionErrorRef.current = visionError;
@@ -143,6 +160,7 @@ const CameraViewer = memo(function CameraViewer({
       payload?.workspace ?? null,
       pendingPointsRef.current,
       pendingLabels,
+      payload?.gripper_tip ?? null,
     );
   }, []);
 
@@ -360,7 +378,7 @@ const CameraViewer = memo(function CameraViewer({
                 >
                   Set 4 points
                 </button>
-                {hasCorners && (
+                {hasCorners && !visionPayload?.gripper_tip?.pixel_xy && (
                   <button
                     type="button"
                     onClick={startGripperCalibration}
@@ -373,7 +391,7 @@ const CameraViewer = memo(function CameraViewer({
                     Set gripper tip
                   </button>
                 )}
-                {readyForPick && (
+                {(readyForPick || Boolean(visionPayload?.gripper_tip?.pixel_xy)) && (
                   <span className="rounded bg-emerald-600/90 px-2 py-1 text-xs font-mono text-white">
                     Ready for pick
                   </span>

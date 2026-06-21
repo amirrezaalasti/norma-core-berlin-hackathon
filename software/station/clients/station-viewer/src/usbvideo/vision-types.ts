@@ -8,10 +8,18 @@ export interface VisionDetection {
   obb_xywha?: [number, number, number, number, number];
   /** Normalized position within the detected workspace board (0–1). */
   board_xy?: [number, number];
-  /** Offset from the gripper-tip origin in board-plane pixels (+x right, +y down). */
+  /** Offset from the board reference point (+x right, +y down). Manual cal: center of 4 corners. */
   offset_xy?: [number, number];
-  /** Euclidean distance from the gripper-tip origin (units follow workspace.units). */
+  /** Euclidean distance from the board reference point (units follow workspace.units). */
   distance?: number;
+  /** 1-indexed grid square on the manual workspace board (row-major from top-left). */
+  square_id?: number;
+  square_col?: number;
+  square_row?: number;
+  /** Normalized board position of the containing square's center. */
+  square_center_board_xy?: [number, number];
+  /** Offset from square center in cell units (−0.5…0.5 at cell edges). */
+  square_local_xy?: [number, number];
 }
 
 /** White-board workspace used as the robot's 2D environment frame. */
@@ -35,12 +43,15 @@ export interface WorkspaceCalibration {
   gripper_tip_set?: boolean;
 }
 
-/** Gripper tip position derived from manual corner homography. */
+/** Gripper tip position derived from manual corner homography or Roboflow detection. */
 export interface GripperTipPosition {
   pixel_xy: [number, number];
   board_xy: [number, number] | null;
   offset_xy: [number, number];
   distance: number;
+  class_name?: string;
+  confidence?: number;
+  source?: 'manual' | 'roboflow' | 'detected';
 }
 
 export interface VisionLatestResponse {

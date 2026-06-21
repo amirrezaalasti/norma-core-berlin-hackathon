@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from functools import lru_cache
+from typing import Any
 
 from .paths import REPO_ROOT
 
@@ -125,9 +126,9 @@ def get_detector(model_name: str, classes_key: str, confidence: float):
 @lru_cache(maxsize=1)
 def get_roboflow_detector():
     _ensure_vision_importable()
-    from norma_vision.roboflow_detector import RoboflowDetector
+    from norma_vision.roboflow_workspace_detector import RoboflowWorkspaceDetector
 
-    return RoboflowDetector()
+    return RoboflowWorkspaceDetector()
 
 
 @lru_cache(maxsize=1)
@@ -188,11 +189,11 @@ def _yolo_fallback_enabled() -> bool:
     )
 
 
-def _run_roboflow(rgb, workspace) -> tuple[list, str]:
+def _run_roboflow(rgb, workspace) -> tuple[list, str, dict | None, Any]:
     detector = get_roboflow_detector()
-    raw = detector.detect(rgb)
-    detections = _enrich_with_workspace(raw, workspace)
-    return detections, detector.model_name
+    detections = detector.detect(rgb)
+    resolved_workspace = detector.last_workspace or workspace
+    return detections, detector.model_name, detector.last_gripper_tip, resolved_workspace
 
 
 def _run_yolo_fallback(
@@ -250,7 +251,12 @@ async def detect_workspace_objects(
 
     if backend in ("auto", "roboflow") and _roboflow_enabled():
         try:
-            detections, model_name = _run_roboflow(rgb, workspace)
+            detections, model_name, roboflow_gripper, roboflow_workspace = _run_roboflow(
+                rgb, workspace
+            )
+            workspace = roboflow_workspace or workspace
+            if roboflow_gripper is not None:
+                gripper_tip = roboflow_gripper
             if detections:
                 logger.info("Roboflow found %d object(s)", len(detections))
         except Exception as exc:

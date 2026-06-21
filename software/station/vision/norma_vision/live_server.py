@@ -11,6 +11,7 @@ from typing import Any
 
 from .detector import DEFAULT_CLASSES, DEFAULT_MODEL, ObjectDetector
 from .contrast_detector import ContrastDetector
+from .roboflow_workspace_detector import RoboflowWorkspaceDetector
 from .frames import create_frame_reader
 
 logger = logging.getLogger("norma-vision-live")
@@ -133,7 +134,7 @@ class VisionRequestHandler(BaseHTTPRequestHandler):
 
 async def detection_loop(
     host: str,
-    detector: ContrastDetector | ObjectDetector,
+    detector: ContrastDetector | ObjectDetector | RoboflowWorkspaceDetector,
     camera_index: int,
     target_fps: float,
 ) -> None:
@@ -200,8 +201,12 @@ def run_live_server(
 ) -> None:
     logging.basicConfig(level=logging.INFO)
 
-    if backend == "contrast":
-        detector: ContrastDetector | ObjectDetector = ContrastDetector(classes=classes)
+    if backend == "roboflow":
+        detector: ContrastDetector | ObjectDetector | RoboflowWorkspaceDetector = (
+            RoboflowWorkspaceDetector()
+        )
+    elif backend == "contrast":
+        detector = ContrastDetector(classes=classes)
     else:
         detector = ObjectDetector(
             model_name=model_name,

@@ -250,6 +250,7 @@ def pick_calibration_from_poses(
             },
         }
         for sample in samples
+        if sample.get("label") != "home_tip"
     ]
     if len(parsed_samples) >= 2:
         scales = derive_pick_scales_multi(home_joints, parsed_samples)
@@ -304,9 +305,10 @@ def rebuild_pick_calibration_from_samples(
             },
         }
         for sample in samples
+        if sample.get("label") != "home_tip"
     ]
     if len(parsed_samples) < 2:
-        raise ValueError("At least two calibration_samples are required")
+        raise ValueError("At least two non-home calibration_samples are required")
 
     scales = derive_pick_scales_multi(home_joints, parsed_samples)
     updated = {
@@ -322,6 +324,122 @@ def rebuild_pick_calibration_from_samples(
     }
     save_pick_calibration(updated)
     return updated
+
+
+def _pick_samples_from_calibration(
+    calibration: dict[str, Any],
+) -> list[tuple[tuple[float, float], dict[int, float], str]]:
+    parsed: list[tuple[tuple[float, float], dict[int, float], str]] = []
+    for sample in calibration.get("calibration_samples") or []:
+        if sample.get("label") == "home_tip":
+            continue
+        offset = sample.get("offset_mm")
+        picks = sample.get("pick_joint_positions")
+        if not offset or not picks:
+            continue
+        pick_joints = {int(joint_id): float(value) for joint_id, value in picks.items()}
+        parsed.append(
+            (
+                (float(offset[0]), float(offset[1])),
+                pick_joints,
+                str(sample.get("label") or ""),
+            )
+        )
+    return parsed
+
+
+def nearest_sample_from_calibration(
+    offset_xy: tuple[float, float],
+    calibration: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Find the nearest calibration sample to the target offset (excluding home_tip)."""
+    samples = calibration.get("calibration_samples") or []
+    valid_samples = [s for s in samples if s.get("label") != "home_tip" and s.get("offset_mm")]
+    if not valid_samples:
+        return None
+
+    tx, ty = float(offset_xy[0]), float(offset_xy[1])
+    nearest_sample = None
+    nearest_dist = float("inf")
+    for sample in valid_samples:
+        ox, oy = float(sample["offset_mm"][0]), float(sample["offset_mm"][1])
+        dist = math.hypot(tx - ox, ty - oy)
+        if dist < nearest_dist:
+            nearest_dist = dist
+            nearest_sample = sample
+    return nearest_sample
+
+
+def joint_targets_from_calibration_samples(
+    home_joints: dict[int, float],
+    offset_xy: tuple[float, float],
+    calibration: dict[str, Any],
+    *,
+    min_samples: int = 2,
+    snap_distance_mm: float = 12.0,
+    power: float = 2.0,
+) -> dict[int, float] | None:
+    """Map board-plane offset to joints via nearest sample or IDW over recordings."""
+    planning_mode = calibration.get("planning_mode")
+    parsed = _pick_samples_from_calibration(calibration)
+
+    if planning_mode == "static_hardcoded":
+        if not parsed:
+            return None
+        tx, ty = float(offset_xy[0]), float(offset_xy[1])
+        nearest_joints: dict[int, float] | None = None
+        nearest_dist = float("inf")
+        for (ox, oy), pick_joints, _label in parsed:
+            dist = math.hypot(tx - ox, ty - oy)
+            if dist < nearest_dist:
+                nearest_dist = dist
+                nearest_joints = pick_joints
+
+        if nearest_joints is not None:
+            return {
+                joint_id: max(0.0, min(1.0, nearest_joints[joint_id]))
+                for joint_id in home_joints
+                if joint_id in nearest_joints
+            }
+        return None
+
+    if len(parsed) < min_samples:
+        return None
+
+    tx, ty = float(offset_xy[0]), float(offset_xy[1])
+    nearest_joints: dict[int, float] | None = None
+    nearest_dist = float("inf")
+    for (ox, oy), pick_joints, _label in parsed:
+        dist = math.hypot(tx - ox, ty - oy)
+        if dist < nearest_dist:
+            nearest_dist = dist
+            nearest_joints = pick_joints
+
+    if nearest_joints is not None and nearest_dist <= snap_distance_mm:
+        return {
+            joint_id: max(0.0, min(1.0, nearest_joints[joint_id]))
+            for joint_id in home_joints
+            if joint_id in nearest_joints
+        }
+
+    weights = [
+        1.0 / (math.hypot(tx - ox, ty - oy) ** power + 1e-3) for (ox, oy), _, _ in parsed
+    ]
+    targets: dict[int, float] = {}
+    for joint_id, home_pos in home_joints.items():
+        contributing = [
+            (weight, pick_joints[joint_id])
+            for weight, (_, pick_joints, _) in zip(weights, parsed)
+            if joint_id in pick_joints
+        ]
+        if not contributing:
+            targets[joint_id] = home_pos
+            continue
+        blended = sum(weight * value for weight, value in contributing) / sum(
+            weight for weight, _ in contributing
+        )
+        targets[joint_id] = max(0.0, min(1.0, blended))
+    return targets
 
 
 def calibration_scales_for_arm(

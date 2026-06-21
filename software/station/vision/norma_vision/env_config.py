@@ -25,6 +25,17 @@ class RoboflowConfig:
     confidence: float
     api_url: str
     class_filter: frozenset[str]
+    object_classes: frozenset[str]
+    gripper_classes: frozenset[str]
+
+
+def _normalize_class_name(name: str) -> str:
+    return name.strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _class_set_from_env(key: str, default: str) -> frozenset[str]:
+    raw = os.environ.get(key, default).strip()
+    return frozenset(_normalize_class_name(item) for item in raw.split(",") if item.strip())
 
 
 def get_roboflow_config() -> RoboflowConfig:
@@ -37,7 +48,7 @@ def get_roboflow_config() -> RoboflowConfig:
 
     raw_filter = os.environ.get("ROBOFLOW_CLASS_FILTER", "").strip()
     class_filter = frozenset(
-        item.strip().lower() for item in raw_filter.split(",") if item.strip()
+        _normalize_class_name(item) for item in raw_filter.split(",") if item.strip()
     )
 
     return RoboflowConfig(
@@ -46,4 +57,12 @@ def get_roboflow_config() -> RoboflowConfig:
         confidence=float(os.environ.get("ROBOFLOW_CONFIDENCE", "0.12")),
         api_url=os.environ.get("ROBOFLOW_API_URL", "https://serverless.roboflow.com").strip(),
         class_filter=class_filter,
+        object_classes=_class_set_from_env(
+            "ROBOFLOW_OBJECT_CLASSES",
+            "block,cube,black_cube",
+        ),
+        gripper_classes=_class_set_from_env(
+            "ROBOFLOW_GRIPPER_CLASSES",
+            "gripper_tip,yellow_tape,gripper",
+        ),
     )
