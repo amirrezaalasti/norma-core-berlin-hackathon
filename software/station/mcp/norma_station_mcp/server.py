@@ -21,6 +21,7 @@ mcp = FastMCP(
         "NormaCore robotics MCP server. Station must run with `--tcp` (port 8888).\n\n"
         "Prefer high-level pick/place tools:\n"
         "- go_home: move to saved home pose (optionally open gripper)\n"
+        "- transfer_object: pick at from_square (1-15) and place at to_square (1-15) in one call\n"
         "- go_to_square_N (1-15): move to board square N, then grasp with partial gripper close\n"
         "- go_to_square: same as go_to_square_N but pass square_id (1-15)\n"
         "- place_at_square_N (1-15): move to square with gripper closed, open gripper last to place\n"
@@ -404,6 +405,7 @@ async def go_to_square(
     Uses recorded joint coordinates when available (e.g. squares 8, 9, 10, 14, 15);
     other squares are interpolated from calibration samples. Set pick=false to only move.
     Use lift_after=true to return home while holding the object (gripper stays closed).
+    For moving an object between squares, use transfer_object instead.
     """
     from .square_control import go_to_square as _go_to_square
 
@@ -485,6 +487,33 @@ def _register_place_square_tools() -> None:
 
 _register_square_tools()
 _register_place_square_tools()
+
+
+@mcp.tool
+async def transfer_object(
+    from_square: int,
+    to_square: int,
+    return_home: bool = True,
+    bus_serial: str = "auto",
+) -> str:
+    """Pick an object at from_square and place it at to_square (board squares 1-15).
+
+    Use this when the user asks to move an object between positions on the board.
+    Do not call place_at_square without picking first. Do not use lift_after on go_to_square
+    for transfers — this tool handles the full pick-and-place sequence.
+    """
+    from .square_control import transfer_object as _transfer_object
+
+    session = get_session()
+    return _json(
+        await _transfer_object(
+            session,
+            from_square,
+            to_square,
+            return_home=return_home,
+            bus_serial=bus_serial,
+        )
+    )
 
 
 @mcp.tool

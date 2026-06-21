@@ -376,12 +376,21 @@ async def pick_object(
 
     if start_from_home:
         await session.open_gripper(bus_serial)
-        await session.move_arm_pose(home_joints, bus_serial)
-        await session.wait_for_arm_pose(
-            home_joints,
+        home_steps = _home_motor_steps(home)
+        await _move_arm_exact(
+            session,
+            joint_positions=home_joints,
+            motor_steps=home_steps,
+            bus_serial=bus_serial,
+        )
+        await _wait_arm_exact(
+            session,
+            joint_positions=home_joints,
+            motor_steps=home_steps,
             tolerance=HOME_TOLERANCE,
-            stable_reads=3,
-            timeout_s=MOTION_TIMEOUT_S,
+            tolerance_steps=HOME_TOLERANCE_STEPS,
+            stable_reads=HOME_STABLE_READS,
+            timeout_s=HOME_MOTION_TIMEOUT_S,
             bus_serial=bus_serial,
         )
 
@@ -415,14 +424,23 @@ async def lift_object(session: Any, bus_serial: str = "auto") -> dict[str, Any]:
     """Lift a held object by moving to home without opening the gripper."""
     home = _require_home_pose()
     home_joints = _home_joint_dict(home)
+    home_steps = _home_motor_steps(home)
 
     await _prepare_session(session, bus_serial)
-    await session.move_arm_pose(home_joints, bus_serial)
-    settled = await session.wait_for_arm_pose(
-        home_joints,
+    await _move_arm_exact(
+        session,
+        joint_positions=home_joints,
+        motor_steps=home_steps,
+        bus_serial=bus_serial,
+    )
+    settled = await _wait_arm_exact(
+        session,
+        joint_positions=home_joints,
+        motor_steps=home_steps,
         tolerance=HOME_TOLERANCE,
-        stable_reads=STABLE_READS,
-        timeout_s=MOTION_TIMEOUT_S,
+        tolerance_steps=HOME_TOLERANCE_STEPS,
+        stable_reads=HOME_STABLE_READS,
+        timeout_s=HOME_MOTION_TIMEOUT_S,
         bus_serial=bus_serial,
     )
 
@@ -431,6 +449,7 @@ async def lift_object(session: Any, bus_serial: str = "auto") -> dict[str, Any]:
     return {
         "action": "lift_object",
         "joint_targets": home_joints,
+        "motor_steps": home_steps,
         "motion_settled": settled,
         "gripper_position": gripper,
         "note": "Gripper left closed to retain the object.",

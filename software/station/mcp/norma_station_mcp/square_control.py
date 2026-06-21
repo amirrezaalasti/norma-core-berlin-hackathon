@@ -302,6 +302,56 @@ async def go_to_square(
     return result
 
 
+def _motion_close_enough(
+    settled: dict[str, Any],
+    *,
+    used_motor_steps: bool,
+) -> bool:
+    if settled.get("reached"):
+        return True
+    if used_motor_steps:
+        return int(settled.get("max_error_steps") or 999) <= HOME_TOLERANCE_STEPS
+    max_error = settled.get("max_error")
+    if max_error is None:
+        return False
+    return float(max_error) <= POSE_TOLERANCE * 2
+
+
+async def transfer_object(
+    session: Any,
+    from_square: int,
+    to_square: int,
+    *,
+    return_home: bool = True,
+    bus_serial: str = "auto",
+) -> dict[str, Any]:
+    """Pick at from_square, place at to_square (gripper stays closed between moves)."""
+    if from_square == to_square:
+        raise ValueError("from_square and to_square must be different")
+
+    pick_result = await go_to_square(
+        session,
+        from_square,
+        pick=True,
+        start_from_home=True,
+        lift_after=False,
+        bus_serial=bus_serial,
+    )
+    place_result = await place_at_square(
+        session,
+        to_square,
+        return_home=return_home,
+        bus_serial=bus_serial,
+    )
+    return {
+        "action": "transfer_object",
+        "from_square": from_square,
+        "to_square": to_square,
+        "pick": pick_result,
+        "place": place_result,
+    }
+
+
 async def place_at_square(
     session: Any,
     square_id: int,
@@ -335,10 +385,11 @@ async def place_at_square(
         bus_serial=bus_serial,
     )
 
-    if not settled.get("reached"):
+    if not _motion_close_enough(settled, used_motor_steps=square_steps is not None):
+        err = settled.get("max_error_steps") or settled.get("max_error")
         raise RuntimeError(
             f"Arm did not settle at square {square_id} before place "
-            f"(max_error={settled.get('max_error')}). Gripper was not opened."
+            f"(error={err}). Gripper was not opened."
         )
 
     gripper_result = await open_gripper_for_place(session, bus_serial)
