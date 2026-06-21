@@ -2,16 +2,29 @@
   "bus_serial": "5B61037157",
   "arm_type": "elrobot",
   "joint_positions": {
-    "1": 0.5649,
-    "2": 0.0222,
-    "3": 0.9842,
-    "4": 0.1917,
-    "5": 0.5225,
-    "6": 0.6515,
-    "7": 0.4967
+    "1": 0.477713,
+    "2": -0.221065,
+    "3": 1.006309,
+    "4": 0.592241,
+    "5": 0.400235,
+    "6": 0.782547,
+    "7": 0.522599
   },
-  "gripper_position": 0.5911,
-  "home_tip_offset_mm": [-92.7, 3.2],
+  "motor_steps": {
+    "1": 2002,
+    "2": 802,
+    "3": 2690,
+    "4": 2262,
+    "5": 1709,
+    "6": 2647,
+    "7": 2136
+  },
+  "gripper_position": 0.972579,
+  "gripper_steps": 2858,
+  "home_tip_offset_mm": [
+    -92.7,
+    3.2
+  ],
   "coordinate_frame": "board_center",
-  "note": "Original initialized pose. Vision offsets are mm from the center of the 4 manual board corners. Yellow tape at home was (-92.7, 3.2) mm from board center."
+  "note": "Exact static pose from live motor dump (2026-06-21). Uses motor_steps for replay."
 }

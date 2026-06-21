@@ -159,6 +159,7 @@ async def move_direction(
     Applies coordinated joint changes from the current pose (not Cartesian mm).
     amount=1.0 is one teleop button press; use 2.0 for a double nudge.
     Prefer this over move_joint for voice commands like "go right" or "move up".
+    Returns immediately by default so voice commands are not blocked waiting for settle.
     """
     from .direction_control import move_direction as _move_direction
 
@@ -422,21 +423,18 @@ async def go_to_square(
 def _register_square_tools() -> None:
     from .square_control import go_to_square as _go_to_square, square_count
 
-    for square_id in range(1, square_count() + 1):
-
-        async def _handler(
+    def _make_go_to_square_handler(square_id: int):
+        async def go_to_square_n(
             pick: bool = True,
             lift_after: bool = False,
             return_home: bool = False,
             bus_serial: str = "auto",
-            *,
-            _square_id: int = square_id,
         ) -> str:
             session = get_session()
             return _json(
                 await _go_to_square(
                     session,
-                    _square_id,
+                    square_id,
                     pick=pick,
                     lift_after=lift_after,
                     return_home=return_home,
@@ -444,42 +442,45 @@ def _register_square_tools() -> None:
                 )
             )
 
-        _handler.__name__ = f"go_to_square_{square_id}"
-        _handler.__doc__ = (
+        go_to_square_n.__name__ = f"go_to_square_{square_id}"
+        go_to_square_n.__doc__ = (
             f"Move to board square {square_id}, partial gripper grasp to pick. "
             f"Voice: 'go to square {square_id}'. Set pick=false to only move. "
             f"Set lift_after=true to lift home while holding."
         )
-        mcp.tool(_handler, name=f"go_to_square_{square_id}")
+        return go_to_square_n
+
+    for square_id in range(1, square_count() + 1):
+        mcp.tool(_make_go_to_square_handler(square_id), name=f"go_to_square_{square_id}")
 
 
 def _register_place_square_tools() -> None:
     from .square_control import place_at_square as _place_at_square, square_count
 
-    for square_id in range(1, square_count() + 1):
-
-        async def _handler(
+    def _make_place_at_square_handler(square_id: int):
+        async def place_at_square_n(
             return_home: bool = False,
             bus_serial: str = "auto",
-            *,
-            _square_id: int = square_id,
         ) -> str:
             session = get_session()
             return _json(
                 await _place_at_square(
                     session,
-                    _square_id,
+                    square_id,
                     return_home=return_home,
                     bus_serial=bus_serial,
                 )
             )
 
-        _handler.__name__ = f"place_at_square_{square_id}"
-        _handler.__doc__ = (
-            f"Place a held object at board square {square_id}: move with gripper closed, "
-            f"open gripper last. Voice: 'put it in square {square_id}'."
+        place_at_square_n.__name__ = f"place_at_square_{square_id}"
+        place_at_square_n.__doc__ = (
+            f"Place a held object at board square {square_id}. "
+            f"Gripper opens only after the arm reaches the square."
         )
-        mcp.tool(_handler, name=f"place_at_square_{square_id}")
+        return place_at_square_n
+
+    for square_id in range(1, square_count() + 1):
+        mcp.tool(_make_place_at_square_handler(square_id), name=f"place_at_square_{square_id}")
 
 
 _register_square_tools()

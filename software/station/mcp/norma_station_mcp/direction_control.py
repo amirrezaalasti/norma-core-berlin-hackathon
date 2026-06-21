@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from .paths import REPO_ROOT
-from .pick_control import MOTION_TIMEOUT_S, POSE_TOLERANCE, STABLE_READS, _prepare_session
+from .pick_control import _prepare_session
+
+DIRECTION_MOTION_TIMEOUT_S = 6.0
+DIRECTION_TOLERANCE_STEPS = 15
+DIRECTION_STABLE_READS = 2
 
 DIRECTION_NUDGE_PATH = Path(
     os.environ.get(
@@ -113,6 +117,44 @@ def _current_joint_dict(arm_state: dict[str, Any]) -> dict[int, float]:
     }
 
 
+def _current_joint_steps(arm_state: dict[str, Any]) -> dict[int, int]:
+    return {
+        int(joint["motor_id"]): int(joint["present_position"])
+        for joint in arm_state.get("joints") or []
+    }
+
+
+def _joint_ranges(arm_state: dict[str, Any]) -> dict[int, tuple[int, int]]:
+    return {
+        int(joint["motor_id"]): (int(joint["range_min"]), int(joint["range_max"]))
+        for joint in arm_state.get("joints") or []
+    }
+
+
+def joint_step_targets_for_direction(
+    current_steps: dict[int, int],
+    ranges: dict[int, tuple[int, int]],
+    direction: str,
+    *,
+    arm_type: str,
+    amount: float = 1.0,
+) -> dict[int, int]:
+    normalized = normalize_direction(direction)
+    nudges = direction_deltas_for_arm(arm_type)
+    deltas = nudges[normalized]
+
+    targets: dict[int, int] = {}
+    for joint_id, steps in current_steps.items():
+        delta_norm = float(deltas.get(joint_id, 0.0)) * amount
+        if abs(delta_norm) < 1e-5:
+            targets[joint_id] = steps
+            continue
+        range_min, range_max = ranges[joint_id]
+        span = range_max - range_min
+        targets[joint_id] = steps + int(round(delta_norm * span))
+    return targets
+
+
 def joint_targets_for_direction(
     current_joints: dict[int, float],
     direction: str,
@@ -140,7 +182,7 @@ async def move_direction(
     *,
     amount: float = 1.0,
     bus_serial: str = "auto",
-    wait: bool = True,
+    wait: bool = False,
 ) -> dict[str, Any]:
     """Move the arm one calibrated teleop nudge in up/down/left/right."""
     if amount <= 0:
@@ -151,8 +193,11 @@ async def move_direction(
     arm_state = session.get_arm_state(bus_serial)
     arm_type = str(arm_state.get("arm_type") or "unknown")
     current = _current_joint_dict(arm_state)
-    targets = joint_targets_for_direction(
-        current,
+    current_steps = _current_joint_steps(arm_state)
+    ranges = _joint_ranges(arm_state)
+    targets = joint_step_targets_for_direction(
+        current_steps,
+        ranges,
         normalized,
         arm_type=arm_type,
         amount=amount,
@@ -160,9 +205,9 @@ async def move_direction(
 
     nudges = direction_deltas_for_arm(arm_type)
     applied_deltas = {
-        joint_id: round(targets[joint_id] - current[joint_id], 4)
+        joint_id: targets[joint_id] - current_steps[joint_id]
         for joint_id in targets
-        if abs(targets[joint_id] - current[joint_id]) > 1e-5
+        if targets[joint_id] != current_steps[joint_id]
     }
     primary = sorted(
         applied_deltas,
@@ -170,27 +215,32 @@ async def move_direction(
         reverse=True,
     )[:3]
 
-    await session.move_arm_pose(targets, bus_serial)
+    await session.move_motors_steps(targets, bus_serial)
 
     result: dict[str, Any] = {
         "action": "move_direction",
         "direction": normalized,
         "amount": amount,
         "arm_type": arm_type,
-        "joint_targets": targets,
-        "applied_deltas": applied_deltas,
+        "motor_steps": targets,
+        "joint_targets": {
+            joint_id: round(current[joint_id], 4) for joint_id in current
+        },
+        "applied_step_deltas": applied_deltas,
         "primary_joints": primary,
         "note": (
-            "Direction moves use teleop-calibrated joint deltas from the current pose, "
-            "not Cartesian mm. Use amount=2.0 for a double nudge."
+            "Direction moves use teleop-calibrated joint deltas from the current pose "
+            "in motor steps (works outside normalized 0-1). Use amount=2.0 for a double nudge."
         ),
     }
     if wait:
-        result["motion_settled"] = await session.wait_for_arm_pose(
+        result["motion_settled"] = await session.wait_for_arm_steps(
             targets,
-            tolerance=POSE_TOLERANCE,
-            stable_reads=STABLE_READS,
-            timeout_s=MOTION_TIMEOUT_S,
+            tolerance_steps=DIRECTION_TOLERANCE_STEPS,
+            stable_reads=DIRECTION_STABLE_READS,
+            timeout_s=DIRECTION_MOTION_TIMEOUT_S,
             bus_serial=bus_serial,
         )
+    else:
+        result["note"] += " Returns immediately; arm keeps moving (wait=true to block until settled)."
     return result

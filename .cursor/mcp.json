@@ -10,7 +10,8 @@
       ],
       "cwd": "/Users/amirrezaalasti/Desktop/selfprojects/norma-core-berlin-hackathon",
       "env": {
-        "STATION_HOST": "localhost:8888"
+        "STATION_HOST": "localhost:8888",
+        "NORMA_MOTOR_SPEED_SCALE": "0.5"
       }
     }
   }

@@ -95,6 +95,9 @@ STATIC_PICK_JOINTS: dict[int, float] = {
 
 POSE_TOLERANCE = 0.015
 HOME_TOLERANCE = 0.02
+HOME_TOLERANCE_STEPS = 12
+HOME_STABLE_READS = 2
+HOME_MOTION_TIMEOUT_S = 12.0
 STABLE_READS = 5
 MOTION_TIMEOUT_S = 45.0
 PLACE_DWELL_S = 0.5
@@ -131,6 +134,53 @@ def _require_home_pose() -> dict[str, Any]:
 
 def _home_joint_dict(home: dict[str, Any]) -> dict[int, float]:
     return {int(k): float(v) for k, v in home["joint_positions"].items()}
+
+
+def _home_motor_steps(home: dict[str, Any]) -> dict[int, int] | None:
+    motor_steps = home.get("motor_steps")
+    if not motor_steps:
+        return None
+    return {int(k): int(v) for k, v in motor_steps.items()}
+
+
+async def _move_arm_exact(
+    session: Any,
+    *,
+    joint_positions: dict[int, float],
+    motor_steps: dict[int, int] | None,
+    bus_serial: str = "auto",
+) -> dict[str, Any]:
+    if motor_steps:
+        return await session.move_motors_steps(motor_steps, bus_serial)
+    return await session.move_arm_pose(joint_positions, bus_serial)
+
+
+async def _wait_arm_exact(
+    session: Any,
+    *,
+    joint_positions: dict[int, float],
+    motor_steps: dict[int, int] | None,
+    tolerance: float,
+    stable_reads: int,
+    timeout_s: float,
+    tolerance_steps: int = 3,
+    bus_serial: str = "auto",
+) -> dict[str, Any]:
+    if motor_steps:
+        return await session.wait_for_arm_steps(
+            motor_steps,
+            tolerance_steps=tolerance_steps,
+            stable_reads=stable_reads,
+            timeout_s=timeout_s,
+            bus_serial=bus_serial,
+        )
+    return await session.wait_for_arm_pose(
+        joint_positions,
+        tolerance=tolerance,
+        stable_reads=stable_reads,
+        timeout_s=timeout_s,
+        bus_serial=bus_serial,
+    )
 
 
 async def _prepare_session(session: Any, bus_serial: str = "auto") -> None:
@@ -247,30 +297,36 @@ async def go_home(
     """Move the arm to the saved home pose."""
     home = _require_home_pose()
     home_joints = _home_joint_dict(home)
+    home_steps = _home_motor_steps(home)
 
     await _prepare_session(session, bus_serial)
     if open_gripper:
         await session.open_gripper(bus_serial)
-    await session.move_arm_pose(home_joints, bus_serial)
+    await _move_arm_exact(
+        session,
+        joint_positions=home_joints,
+        motor_steps=home_steps,
+        bus_serial=bus_serial,
+    )
 
     result: dict[str, Any] = {
         "action": "go_home",
         "joint_targets": home_joints,
+        "motor_steps": home_steps,
         "gripper_opened": open_gripper,
     }
     if wait:
-        settled = await session.wait_for_arm_pose(
-            home_joints,
+        settled = await _wait_arm_exact(
+            session,
+            joint_positions=home_joints,
+            motor_steps=home_steps,
             tolerance=HOME_TOLERANCE,
-            stable_reads=STABLE_READS,
-            timeout_s=MOTION_TIMEOUT_S,
+            tolerance_steps=HOME_TOLERANCE_STEPS,
+            stable_reads=HOME_STABLE_READS,
+            timeout_s=HOME_MOTION_TIMEOUT_S,
             bus_serial=bus_serial,
         )
         result["motion_settled"] = settled
-        if open_gripper:
-            gripper_home = home.get("gripper_position")
-            if gripper_home is not None:
-                await session.set_gripper(float(gripper_home), bus_serial)
     return result
 
 

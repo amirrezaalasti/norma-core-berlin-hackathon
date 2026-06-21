@@ -8,6 +8,9 @@ from typing import Any
 
 from .arm_model import ArmProfile, annotate_motor, detect_arm_profile, motor_role
 from .motor_state import (
+    RAM_ACC,
+    RAM_GOAL_POSITION,
+    RAM_GOAL_SPEED,
     find_bus,
     normalized_to_steps,
     parse_motor_snapshot,
@@ -32,6 +35,22 @@ def _station_host() -> str:
     return os.environ.get("STATION_HOST", "localhost:8888")
 
 
+def _motion_profile() -> tuple[int, int]:
+    """Return (goal_speed, goal_accel) for MCP moves. Default is half of teleop max."""
+    scale = float(os.environ.get("NORMA_MOTOR_SPEED_SCALE", "0.5"))
+    base_speed = int(os.environ.get("NORMA_BASE_GOAL_SPEED", "3300"))
+    base_accel = int(os.environ.get("NORMA_BASE_GOAL_ACCEL", "50"))
+    if "NORMA_GOAL_SPEED" in os.environ:
+        speed = int(os.environ["NORMA_GOAL_SPEED"])
+    else:
+        speed = max(1, int(base_speed * scale))
+    if "NORMA_GOAL_ACCEL" in os.environ:
+        accel = int(os.environ["NORMA_GOAL_ACCEL"])
+    else:
+        accel = max(1, int(base_accel * scale))
+    return speed, accel
+
+
 class StationSession:
     """Persistent TCP client with a cached st3215/inference frame."""
 
@@ -47,10 +66,30 @@ class StationSession:
         self._queue: asyncio.Queue | None = None
         self._last_error: str | None = None
 
+    async def _reset_connection(self) -> None:
+        self.client = None
+        self._follow_task = None
+        self._queue = None
+        self.latest_inference = None
+        self.latest_stamp_s = None
+        self._last_error = None
+
+    def _stream_healthy(self) -> bool:
+        return (
+            self.client is not None
+            and self._last_error is None
+            and self._follow_task is not None
+            and not self._follow_task.done()
+        )
+
     async def ensure_connected(self) -> None:
         async with self._init_lock:
-            if self.client is not None:
+            if self._stream_healthy():
                 return
+
+            if self.client is not None:
+                self.logger.warning("Station stream unhealthy; reconnecting to %s", self.host)
+                await self._reset_connection()
 
             self.logger.info("Connecting to station at %s", self.host)
             self.client = await new_station_client(self.host, self.logger)
@@ -226,6 +265,78 @@ class StationSession:
             ).encode(),
         )
 
+    async def _apply_motion_profile(
+        self,
+        motor_ids: list[int],
+        bus_serial: str,
+    ) -> dict[str, int]:
+        """Set goal speed/accel before position commands (order matters on ST3215)."""
+        if not motor_ids:
+            return {"goal_speed": 0, "goal_accel": 0}
+
+        speed, accel = _motion_profile()
+        speed_writes = [
+            (motor_id, speed.to_bytes(2, byteorder="little")) for motor_id in motor_ids
+        ]
+        accel_writes = [(motor_id, bytes([accel])) for motor_id in motor_ids]
+        commands_batch = [
+            cmd
+            for cmd in (
+                self._sync_write_command(bus_serial, RAM_GOAL_SPEED, speed_writes),
+                self._sync_write_command(bus_serial, RAM_ACC, accel_writes),
+            )
+            if cmd is not None
+        ]
+        await send_commands(self.client, commands_batch)
+        return {"goal_speed": speed, "goal_accel": accel}
+
+    async def move_motors_steps(
+        self,
+        goal_steps: dict[int, int],
+        bus_serial: str = "auto",
+    ) -> dict[str, Any]:
+        """Move multiple motors to exact calibrated step positions."""
+        goal_steps = {int(motor_id): int(steps) for motor_id, steps in goal_steps.items()}
+        await self.ensure_connected()
+        await self.wait_for_inference()
+
+        if not goal_steps:
+            raise ValueError("goal_steps must not be empty")
+
+        resolved_serial, _, profile = self._resolve_bus(bus_serial)
+        goal_writes: list[tuple[int, bytes]] = []
+        resolved_targets: dict[str, dict[str, Any]] = {}
+
+        for motor_id, steps in sorted(goal_steps.items()):
+            motor = self.get_motor(resolved_serial, motor_id)
+            range_min = int(motor["range_min"])
+            range_max = int(motor["range_max"])
+            if range_min >= range_max:
+                raise ValueError(f"motor {motor_id} has invalid calibrated range")
+            goal_writes.append((motor_id, steps.to_bytes(2, byteorder="little")))
+            span = range_max - range_min
+            resolved_targets[str(motor_id)] = {
+                "role": motor_role(profile, motor_id),
+                "goal_steps": steps,
+                "position_normalized": round((steps - range_min) / span, 6) if span else 0.0,
+            }
+
+        motion_profile = await self._apply_motion_profile(
+            list(goal_steps.keys()),
+            resolved_serial,
+        )
+        await send_commands(
+            self.client,
+            [self._sync_write_command(resolved_serial, RAM_GOAL_POSITION, goal_writes)],
+        )
+
+        return {
+            "bus_serial": resolved_serial,
+            "arm_type": profile.name,
+            "motors": resolved_targets,
+            "motion_profile": motion_profile,
+        }
+
     async def move_motors_normalized(
         self,
         positions: dict[int, float],
@@ -259,6 +370,10 @@ class StationSession:
                 "sent_steps": steps,
             }
 
+        motion_profile = await self._apply_motion_profile(
+            list(positions.keys()),
+            resolved_serial,
+        )
         await send_commands(
             self.client,
             [self._sync_write_command(resolved_serial, 0x2A, goal_writes)],
@@ -268,6 +383,7 @@ class StationSession:
             "bus_serial": resolved_serial,
             "arm_type": profile.name,
             "motors": resolved_targets,
+            "motion_profile": motion_profile,
         }
 
     async def move_joint(
@@ -338,6 +454,59 @@ class StationSession:
 
     async def close_gripper(self, bus_serial: str = "auto") -> dict[str, Any]:
         return await self.set_gripper(0.0, bus_serial)
+
+    async def wait_for_arm_steps(
+        self,
+        joint_targets: dict[int, int],
+        *,
+        tolerance_steps: int = 3,
+        stable_reads: int = 5,
+        poll_s: float = 0.15,
+        timeout_s: float = 45.0,
+        bus_serial: str = "auto",
+    ) -> dict[str, Any]:
+        """Block until all listed joints reach their step targets."""
+        targets = {int(joint_id): int(steps) for joint_id, steps in joint_targets.items()}
+        deadline = time.monotonic() + timeout_s
+        consecutive_ok = 0
+        last_state: dict[str, Any] | None = None
+        max_error = 0
+
+        while time.monotonic() < deadline:
+            await self.wait_for_inference(timeout_s=min(2.0, deadline - time.monotonic()))
+            last_state = self.get_arm_state(bus_serial)
+            joint_by_id = {
+                joint["motor_id"]: joint for joint in last_state.get("joints", [])
+            }
+            max_error = 0
+            for joint_id, target in targets.items():
+                joint = joint_by_id.get(joint_id)
+                if joint is None:
+                    raise RuntimeError(f"Joint {joint_id} missing from arm state")
+                present = int(joint["present_position"])
+                max_error = max(max_error, abs(present - target))
+
+            if max_error <= tolerance_steps:
+                consecutive_ok += 1
+                if consecutive_ok >= stable_reads:
+                    return {
+                        "reached": True,
+                        "max_error_steps": max_error,
+                        "joint_targets": targets,
+                        "arm_state": last_state,
+                    }
+            else:
+                consecutive_ok = 0
+
+            await asyncio.sleep(poll_s)
+
+        return {
+            "reached": False,
+            "max_error_steps": max_error,
+            "joint_targets": targets,
+            "arm_state": last_state,
+            "note": f"Timed out after {timeout_s}s waiting for arm steps",
+        }
 
     async def wait_for_arm_pose(
         self,
@@ -421,6 +590,8 @@ class StationSession:
             clamped = max(range_min, min(range_max, goal_steps))
         else:
             clamped = goal_steps
+
+        await self._apply_motion_profile([motor_id], resolved_serial)
 
         cmd = commands.DriverCommand(
             type=drivers.StationCommandType.STC_ST3215_COMMAND,

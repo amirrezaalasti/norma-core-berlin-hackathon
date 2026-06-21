@@ -389,7 +389,7 @@ def joint_targets_from_calibration_samples(
         )
         if fixed:
             return {
-                joint_id: max(0.0, min(1.0, float(fixed[str(joint_id)])))
+                joint_id: float(fixed[str(joint_id)])
                 for joint_id in home_joints
                 if str(joint_id) in fixed
             }
@@ -406,7 +406,7 @@ def joint_targets_from_calibration_samples(
 
         if nearest_joints is not None:
             return {
-                joint_id: max(0.0, min(1.0, nearest_joints[joint_id]))
+                joint_id: nearest_joints[joint_id]
                 for joint_id in home_joints
                 if joint_id in nearest_joints
             }

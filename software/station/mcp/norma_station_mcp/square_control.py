@@ -11,14 +11,20 @@ from .pick_calibration import (
     load_pick_calibration,
 )
 from .pick_control import (
+    HOME_MOTION_TIMEOUT_S,
+    HOME_STABLE_READS,
+    HOME_TOLERANCE_STEPS,
     MOTION_TIMEOUT_S,
     PLACE_DWELL_S,
     POSE_TOLERANCE,
     STABLE_READS,
     _ensure_gripper_open_before_close,
     _home_joint_dict,
+    _home_motor_steps,
+    _move_arm_exact,
     _prepare_session,
     _require_home_pose,
+    _wait_arm_exact,
     close_gripper_for_pick,
     go_home,
     lift_object,
@@ -146,7 +152,6 @@ def joint_targets_for_square(
         home_joints = _home_joint_dict(home)
 
     info = square_info(square_id)
-    offset = square_offset_mm(square_id, calibration)
     recorded = _recorded_square_sample(square_id, calibration)
 
     if recorded and recorded.get("pick_joint_positions"):
@@ -154,19 +159,33 @@ def joint_targets_for_square(
             int(joint_id): float(value)
             for joint_id, value in recorded["pick_joint_positions"].items()
         }
-        source = "recorded"
+        motor_steps_raw = recorded.get("motor_steps")
+        motor_steps = (
+            {int(k): int(v) for k, v in motor_steps_raw.items()}
+            if motor_steps_raw
+            else None
+        )
+        source = "recorded_static"
         sample_offset = recorded.get("offset_mm")
+        offset = tuple(sample_offset) if sample_offset else (0.0, 0.0)
     else:
+        offset = square_offset_mm(square_id, calibration)
         joints = _idw_joint_targets(home_joints, offset, calibration)
+        motor_steps = None
         source = "interpolated"
         sample_offset = None
 
     return {
         **info,
-        "offset_mm": [round(offset[0], 2), round(offset[1], 2)],
+        "offset_mm": [round(float(offset[0]), 2), round(float(offset[1]), 2)],
         "recorded_offset_mm": sample_offset,
         "planning_source": source,
-        "joint_targets": {str(joint_id): round(value, 4) for joint_id, value in joints.items()},
+        "joint_targets": {str(joint_id): value for joint_id, value in joints.items()},
+        "motor_steps": (
+            {str(joint_id): steps for joint_id, steps in motor_steps.items()}
+            if motor_steps
+            else None
+        ),
     }
 
 
@@ -205,17 +224,30 @@ async def go_to_square(
     home_joints = _home_joint_dict(home)
     pose = joint_targets_for_square(square_id)
     square_joints = {int(k): float(v) for k, v in pose["joint_targets"].items()}
+    motor_steps_raw = pose.get("motor_steps")
+    square_steps = (
+        {int(k): int(v) for k, v in motor_steps_raw.items()} if motor_steps_raw else None
+    )
 
     await _prepare_session(session, bus_serial)
 
     if start_from_home:
         await session.open_gripper(bus_serial)
-        await session.move_arm_pose(home_joints, bus_serial)
-        await session.wait_for_arm_pose(
-            home_joints,
+        home_steps = _home_motor_steps(home)
+        await _move_arm_exact(
+            session,
+            joint_positions=home_joints,
+            motor_steps=home_steps,
+            bus_serial=bus_serial,
+        )
+        await _wait_arm_exact(
+            session,
+            joint_positions=home_joints,
+            motor_steps=home_steps,
             tolerance=0.02,
-            stable_reads=3,
-            timeout_s=MOTION_TIMEOUT_S,
+            tolerance_steps=HOME_TOLERANCE_STEPS,
+            stable_reads=HOME_STABLE_READS,
+            timeout_s=HOME_MOTION_TIMEOUT_S,
             bus_serial=bus_serial,
         )
 
@@ -223,12 +255,20 @@ async def go_to_square(
         await session.open_gripper(bus_serial)
         await asyncio.sleep(0.3)
 
-    await session.move_arm_pose(square_joints, bus_serial)
-    settled = await session.wait_for_arm_pose(
-        square_joints,
+    await _move_arm_exact(
+        session,
+        joint_positions=square_joints,
+        motor_steps=square_steps,
+        bus_serial=bus_serial,
+    )
+    settled = await _wait_arm_exact(
+        session,
+        joint_positions=square_joints,
+        motor_steps=square_steps,
         tolerance=POSE_TOLERANCE,
-        stable_reads=STABLE_READS,
-        timeout_s=MOTION_TIMEOUT_S,
+        tolerance_steps=HOME_TOLERANCE_STEPS,
+        stable_reads=HOME_STABLE_READS,
+        timeout_s=HOME_MOTION_TIMEOUT_S if square_steps else MOTION_TIMEOUT_S,
         bus_serial=bus_serial,
     )
 
@@ -240,6 +280,7 @@ async def go_to_square(
         "board_xy": pose["board_xy"],
         "offset_mm": pose["offset_mm"],
         "joint_targets": pose["joint_targets"],
+        "motor_steps": pose.get("motor_steps"),
         "motion_settled": settled,
     }
 
@@ -271,14 +312,26 @@ async def place_at_square(
     """Place a held object at a board square: move with gripper closed, open last."""
     pose = joint_targets_for_square(square_id)
     square_joints = {int(k): float(v) for k, v in pose["joint_targets"].items()}
+    motor_steps_raw = pose.get("motor_steps")
+    square_steps = (
+        {int(k): int(v) for k, v in motor_steps_raw.items()} if motor_steps_raw else None
+    )
 
     await _prepare_session(session, bus_serial)
-    await session.move_arm_pose(square_joints, bus_serial)
-    settled = await session.wait_for_arm_pose(
-        square_joints,
+    await _move_arm_exact(
+        session,
+        joint_positions=square_joints,
+        motor_steps=square_steps,
+        bus_serial=bus_serial,
+    )
+    settled = await _wait_arm_exact(
+        session,
+        joint_positions=square_joints,
+        motor_steps=square_steps,
         tolerance=POSE_TOLERANCE,
-        stable_reads=STABLE_READS,
-        timeout_s=MOTION_TIMEOUT_S,
+        tolerance_steps=HOME_TOLERANCE_STEPS,
+        stable_reads=HOME_STABLE_READS,
+        timeout_s=HOME_MOTION_TIMEOUT_S if square_steps else MOTION_TIMEOUT_S,
         bus_serial=bus_serial,
     )
 
