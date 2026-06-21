@@ -130,7 +130,9 @@ Expected output:
   "host": "localhost:8888",
   "connected": true,
   "setup_done": true,
+  "frame_count": 1,
   "has_latest_inference": true,
+  "last_error": null,
   "bus_count": 1
 }
 ```
