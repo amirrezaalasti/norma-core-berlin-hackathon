@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "norma-station": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "software/station/mcp",
+        "python",
+        "-m",
+        "norma_station_mcp"
+      ],
+      "env": {
+        "STATION_HOST": "localhost:8888"
+      }
+    }
+  }
+}

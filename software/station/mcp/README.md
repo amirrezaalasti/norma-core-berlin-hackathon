@@ -139,14 +139,19 @@ Expected output:
 
 ---
 
-## 4. Enable MCP in Cursor
+## 4. Enable MCP (Claude Code terminal + Cursor)
 
-The project includes `.cursor/mcp.json`:
+We primarily used **Claude Code in the terminal** to drive the MCP server during the hackathon. **Cursor** uses the same `norma-station` tools via a parallel config.
+
+### Claude Code (terminal — recommended)
+
+The repo includes [`.mcp.json`](../../../.mcp.json) at the project root:
 
 ```json
 {
   "mcpServers": {
     "norma-station": {
+      "type": "stdio",
       "command": "uv",
       "args": [
         "run",
@@ -165,14 +170,32 @@ The project includes `.cursor/mcp.json`:
 ```
 
 1. Ensure station is running (step 2).
+2. From the repo root: `claude`
+3. Type `/mcp` and approve **norma-station** on first use.
+4. Ask Claude to control the arm (`go_home`, `say_hi`, `transfer_object`, …).
+
+Or add via CLI:
+
+```bash
+claude mcp add --scope project norma-station -- \
+  uv run --project software/station/mcp python -m norma_station_mcp
+```
+
+Docs: [Claude Code MCP](https://code.claude.com/docs/en/mcp)
+
+### Cursor (IDE)
+
+The project also includes [`.cursor/mcp.json`](../../../.cursor/mcp.json) with the same server definition.
+
+1. Ensure station is running (step 2).
 2. Reload MCP servers in Cursor (Settings → MCP → refresh, or restart Cursor).
 3. The **norma-station** server should appear with tools like `get_arm_state`, `move_joint`, `open_gripper`, etc.
 
-If the robot runs on another machine, change `STATION_HOST` to e.g. `"192.168.1.100:8888"`.
+If the robot runs on another machine, change `STATION_HOST` to e.g. `"192.168.1.100:8888"` in both config files.
 
 ---
 
-## 5. Control the robot from Cursor
+## 5. Control the robot via MCP
 
 ### Pick / place workflow (recommended)
 
@@ -330,7 +353,7 @@ In the terminal where station is running, press **Ctrl+C**.
 | `Nothing listening on 8888` | Start station with `--tcp` (step 2). |
 | No `/dev/cu.usb*` device | Replug USB cable; try a different port/cable. |
 | `No st3215/inference frames` | Confirm `st3215.enabled: true` in `station.yaml`; check station logs for port errors. |
-| MCP tools fail to connect | Station must be running first; reload MCP in Cursor. |
+| MCP tools fail to connect | Station must be running first; Claude Code: `/mcp` and approve `norma-station`; Cursor: reload MCP |
 | `Missing generated protobufs` | Run `make protobuf` from repo root. |
 | Arm detected but won't move | Run `enable_arm_torque` before sending move commands. |
 | Build fails on `Asset::get` | Run `make client` in `software/station/bin/station` before `cargo build`. |

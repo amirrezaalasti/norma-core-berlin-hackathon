@@ -2,7 +2,7 @@
 
 **Voice-controlled robotics with AI agents, computer vision, and MCP.**
 
-This repository is our Berlin hackathon build on top of [NormaCore](https://normacore.dev) — an open robotics platform for real-time arm control, data collection, and deployment. We extended it with an MCP server, a voice assistant, vision-guided workspace calibration, and high-level pick/place tools so you can operate an ST3215 arm (ElRobot or SO-101) from Cursor, natural language, or speech.
+This repository is our Berlin hackathon build on top of [NormaCore](https://normacore.dev) — an open robotics platform for real-time arm control, data collection, and deployment. We extended it with an MCP server, a voice assistant, vision-guided workspace calibration, and high-level pick/place tools so you can operate an ST3215 arm (ElRobot or SO-101) from **Claude Code in the terminal**, Cursor, natural language, or speech.
 
 **[How to run →](#how-to-run)**
 
@@ -12,7 +12,7 @@ This repository is our Berlin hackathon build on top of [NormaCore](https://norm
 
 | Capability | Description |
 |---|---|
-| **MCP server** | 50+ tools exposed to AI assistants (Cursor, Claude, etc.) for joint motion, gripper control, pick/place, and board-square navigation |
+| **MCP server** | 50+ tools exposed to AI assistants — we drive it from **Claude Code** in the terminal (and Cursor) for joint motion, gripper control, pick/place, and board-square navigation |
 | **Voice assistant** | Speech → MCP tool calls via **[n8n](https://n8n.io)** (recommended) or direct **Codex/OpenAI API** + local Python agent |
 | **Vision stack** | Browser overlay (local contrast detection), optional Roboflow API, AprilTag mm calibration, and Python offline/live pipelines |
 | **Board grid control** | 5×3 workspace grid with per-square pick and place (`go_to_square_8`, `place_at_square_3`, `transfer_object`, …) |
@@ -50,7 +50,8 @@ This repository is our Berlin hackathon build on top of [NormaCore](https://norm
 |------|---------|-----|
 | **[n8n](https://n8n.io)** | Voice agent workflow | Visual orchestration of wake word → STT → LLM → MCP/HTTP → robot; easy to tweak prompts and wire new tools without redeploying Python |
 | **[Lovable](https://lovable.dev)** | Operator UI | Fast React dashboard for board grid, transfer flows, and live status — see [UI section](software/station/mcp/README.md#ui-development-lovable--station-viewer) |
-| **Cursor + MCP** | Engineering / debugging | Direct access to all `norma-station` tools while calibrating and testing motion |
+| **Claude Code + MCP** | Terminal robot control | Primary way we used MCP during the hackathon — `claude` in the repo with `norma-station` tools |
+| **Cursor + MCP** | IDE / debugging | Same MCP server via [`.cursor/mcp.json`](.cursor/mcp.json) |
 | **Station viewer** | Calibration + vision | Board corners, gripper tip, camera overlay, grid — ships in this repo |
 
 ### Architecture
@@ -59,7 +60,8 @@ This repository is our Berlin hackathon build on top of [NormaCore](https://norm
 flowchart LR
   subgraph inputs [Input]
     Voice[Microphone]
-    Cursor[Cursor / MCP client]
+    Claude[Claude Code terminal]
+    Cursor[Cursor IDE]
   end
 
   subgraph agents [Agents]
@@ -87,6 +89,7 @@ flowchart LR
   Voice -.-> VA
   N8N --> MCP
   VA --> MCP
+  Claude --> MCP
   Cursor --> MCP
   MCP --> TCP
   TCP --> Arm
@@ -100,7 +103,7 @@ flowchart LR
 
 ## How to run
 
-End-to-end steps to reproduce the demos above. You need **two things running**: NormaCore Station (talks to the arm over USB) and a **control layer** (Cursor MCP, n8n, or the Python voice agent).
+End-to-end steps to reproduce the demos above. You need **two things running**: NormaCore Station (talks to the arm over USB) and a **control layer** (Claude Code, Cursor MCP, n8n, or the Python voice agent).
 
 ### Prerequisites
 
@@ -145,22 +148,40 @@ More options (build from source, desktop app): [`software/station/mcp/README.md`
 
 Choose **one** of the following.
 
-#### A) Cursor + MCP (fastest to try)
+#### A) Claude Code + MCP in the terminal (recommended for MCP)
+
+We used **[Claude Code](https://code.claude.com)** in the terminal as the main MCP client during the hackathon. With Station running in Terminal 1:
+
+```bash
+# Terminal 2 — from repo root
+claude
+```
+
+On first run, type `/mcp` and **approve** the `norma-station` server (loaded from [`.mcp.json`](.mcp.json)). Then ask Claude to control the arm:
+
+- *"Enable arm torque and go home"*
+- *"Say hi"* → matches [`videos/hi.gif`](videos/hi.gif)
+- *"Dance"* → matches [`videos/dance.gif`](videos/dance.gif)
+- *"Go to square 9 and pick"* → matches [`videos/pickup.gif`](videos/pickup.gif)
+- *"Place at square 15"* → matches [`videos/put.gif`](videos/put.gif)
+- *"Move the object from position 9 to position 15"* → `transfer_object`
+
+**First-time MCP setup** (if `.mcp.json` is missing or you prefer the CLI):
+
+```bash
+claude mcp add --scope project norma-station -- \
+  uv run --project software/station/mcp python -m norma_station_mcp
+```
+
+Requires [Claude Code](https://code.claude.com/docs/en/overview) installed and `STATION_HOST=localhost:8888` (set in `.mcp.json`).
+
+#### B) Cursor + MCP (IDE)
 
 1. Open this repo in **Cursor**
-2. Settings → **MCP** → refresh — confirm **norma-station** is connected
-3. Chat with the robot, e.g.:
+2. Settings → **MCP** → refresh — confirm **norma-station** is connected ([`.cursor/mcp.json`](.cursor/mcp.json))
+3. Use the same example prompts as above in Cursor chat
 
-   - *"Enable arm torque and go home"*
-   - *"Say hi"* → matches [`videos/hi.gif`](videos/hi.gif)
-   - *"Dance"* → matches [`videos/dance.gif`](videos/dance.gif)
-   - *"Go to square 9 and pick"* → matches [`videos/pickup.gif`](videos/pickup.gif)
-   - *"Place at square 15"* → matches [`videos/put.gif`](videos/put.gif)
-   - *"Move the object from position 9 to position 15"* → `transfer_object`
-
-MCP is configured in [`.cursor/mcp.json`](.cursor/mcp.json) (`STATION_HOST=localhost:8888`).
-
-#### B) Voice — n8n (recommended for demos)
+#### C) Voice — n8n (recommended for demos)
 
 1. Start your **[n8n](https://n8n.io)** instance and import/open the voice workflow
 2. Set credentials: OpenAI/Codex API key, `STATION_HOST=localhost:8888`
@@ -168,7 +189,7 @@ MCP is configured in [`.cursor/mcp.json`](.cursor/mcp.json) (`STATION_HOST=local
 
 See [`software/station/mcp/README.md` — Voice agent (n8n)](software/station/mcp/README.md#voice-agent-n8n--codex-api).
 
-#### C) Voice — Python agent (Codex/OpenAI API direct)
+#### D) Voice — Python agent (Codex/OpenAI API direct)
 
 ```bash
 cd software/agents/voice_assistant
@@ -180,10 +201,10 @@ When you see `READY!`, speak naturally (*"go home"*, *"say hi"*, *"move from 9 t
 
 Details: [`software/agents/voice_assistant/README.md`](software/agents/voice_assistant/README.md)
 
-#### D) MCP server only (debug / scripts)
+#### E) MCP server only (debug / scripts)
 
 ```bash
-# From repo root — stdio MCP (used by Cursor and the voice agent)
+# From repo root — stdio MCP (used by Claude Code, Cursor, and the voice agent)
 uv run --project software/station/mcp python -m norma_station_mcp
 ```
 
@@ -276,6 +297,7 @@ norma-core-berlin-hackathon/
 ├── .norma/                       # Local calibration (home pose, grid, nudges)
 ├── videos/                       # Demo clips (GIF / MP4 for README, MOV sources)
 ├── .cursor/mcp.json              # Cursor MCP configuration
+├── .mcp.json                     # Claude Code MCP configuration (terminal)
 └── .env.example                  # Vision / Roboflow environment template
 ```
 
@@ -321,7 +343,7 @@ This hackathon fork builds on the full NormaCore toolkit:
 | Problem | Fix |
 |---|---|
 | Nothing on port 8888 | Start station with `--tcp` |
-| MCP tools fail | Station must be running first; reload MCP in Cursor |
+| MCP tools fail | Station must be running first; Claude Code: `/mcp` approve `norma-station`; Cursor: reload MCP |
 | `Missing generated protobufs` | Run `make protobuf` from repo root |
 | Arm won't move | Call `enable_arm_torque` before motion commands |
 | Voice assistant errors | n8n: check workflow credentials and MCP/HTTP node URL; direct agent: set `OPENAI_API_KEY` in `software/agents/voice_assistant/.env` |
@@ -333,10 +355,13 @@ See [How to run](#how-to-run) for the full setup. Quick copy-paste:
 # Terminal 1 — station
 cd .tmp/station && RUST_LOG=info ./station --tcp --web --config station.yaml
 
+# Terminal 2 — Claude Code + MCP (recommended)
+claude    # /mcp to verify norma-station, then control the arm
+
 # Terminal 2 — voice (direct API)
 cd software/agents/voice_assistant && uv run agent.py
 
-# Or use Cursor MCP / n8n (see README)
+# Or use Claude Code / Cursor MCP / n8n (see README)
 ```
 
 More detail: [`software/station/mcp/README.md`](software/station/mcp/README.md) · [`software/agents/voice_assistant/README.md`](software/agents/voice_assistant/README.md)
