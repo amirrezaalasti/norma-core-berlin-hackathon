@@ -132,6 +132,28 @@
       "gripper_pick": 0.4718
     },
     {
+      "label": "square_15",
+      "square_id": 15,
+      "board_xy": [
+        0.9,
+        0.8333
+      ],
+      "offset_mm": [
+        83.7,
+        54.1
+      ],
+      "pick_joint_positions": {
+        "1": 0.3362,
+        "2": 0.824,
+        "3": 0.6603,
+        "4": 0.2724,
+        "5": 0.4565,
+        "6": 0.8741,
+        "7": 0.3749
+      },
+      "gripper_pick": 0.4565
+    },
+    {
       "label": "square_10",
       "square_id": 10,
       "board_xy": [

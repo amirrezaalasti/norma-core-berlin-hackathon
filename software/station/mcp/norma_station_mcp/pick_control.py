@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +97,9 @@ POSE_TOLERANCE = 0.015
 HOME_TOLERANCE = 0.02
 STABLE_READS = 5
 MOTION_TIMEOUT_S = 45.0
+PLACE_DWELL_S = 0.5
+GRIPPER_OPEN_TOLERANCE = 0.85
+GRIPPER_MOTION_TIMEOUT_S = 8.0
 
 
 def load_fixed_pick_joints() -> dict[int, float]:
@@ -138,6 +142,43 @@ async def _ensure_gripper_open_before_close(session: Any, bus_serial: str = "aut
     if float(gripper.get("present_position_normalized") or 0.0) < 0.85:
         await session.open_gripper(bus_serial)
         await asyncio.sleep(0.5)
+
+
+async def _wait_for_gripper(
+    session: Any,
+    *,
+    target_min: float,
+    bus_serial: str = "auto",
+    timeout_s: float = GRIPPER_MOTION_TIMEOUT_S,
+    poll_s: float = 0.1,
+) -> float:
+    """Block until gripper present position reaches target_min (normalized 0-1)."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        await session.wait_for_inference(timeout_s=min(2.0, max(0.1, deadline - time.monotonic())))
+        arm_state = session.get_arm_state(bus_serial)
+        gripper = arm_state.get("gripper") or {}
+        present = float(gripper.get("present_position_normalized") or 0.0)
+        if present >= target_min:
+            return present
+        await asyncio.sleep(poll_s)
+    raise RuntimeError(
+        f"Gripper did not reach {target_min} within {timeout_s}s "
+        "(object may still be held)."
+    )
+
+
+async def open_gripper_for_place(session: Any, bus_serial: str = "auto") -> dict[str, Any]:
+    """Open gripper for placement only after a brief dwell at the target pose."""
+    await asyncio.sleep(PLACE_DWELL_S)
+    result = await session.open_gripper(bus_serial)
+    present = await _wait_for_gripper(
+        session,
+        target_min=GRIPPER_OPEN_TOLERANCE,
+        bus_serial=bus_serial,
+    )
+    result["present_position_normalized"] = present
+    return result
 
 
 async def go_home(
@@ -300,8 +341,7 @@ async def place_object(session: Any, bus_serial: str = "auto") -> dict[str, Any]
         bus_serial=bus_serial,
     )
 
-    await session.open_gripper(bus_serial)
-    await asyncio.sleep(1.5)
+    await open_gripper_for_place(session, bus_serial)
 
     home_result = await go_home(session, bus_serial=bus_serial, open_gripper=True, wait=True)
     return {

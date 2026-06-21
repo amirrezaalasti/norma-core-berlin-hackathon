@@ -21,10 +21,15 @@ mcp = FastMCP(
         "NormaCore robotics MCP server. Station must run with `--tcp` (port 8888).\n\n"
         "Prefer high-level pick/place tools:\n"
         "- go_home: move to saved home pose (optionally open gripper)\n"
+        "- go_to_square_N (1-15): move to board square N, then fully close gripper to pick\n"
+        "- go_to_square: same as go_to_square_N but pass square_id (1-15)\n"
+        "- place_at_square_N (1-15): move to square with gripper closed, open gripper last to place\n"
+        "- place_at_square: same as place_at_square_N but pass square_id (1-15)\n"
+        "- list_square_poses / get_square_pose: inspect per-square joint targets\n"
         "- move_direction: nudge up/down/left/right using teleop-calibrated joint deltas\n"
-        "- pick_object: open gripper, move to static pick pose, close gripper\n"
+        "- pick_object: open gripper, move to static pick pose, fully close gripper\n"
         "- lift_object: move to home while holding object (gripper stays closed)\n"
-        "- place_object: move to static pick pose, open gripper, return home\n"
+        "- place_object: move to static pick pose with gripper closed, open gripper last, return home\n"
         "- get_fixed_pick_pose / get_home_pose: read home and static pick poses\n\n"
         "Pick/placement always uses hardcoded STATIC_PICK_JOINTS — no vision offset planning.\n\n"
         "Other tools:\n"
@@ -117,14 +122,28 @@ async def move_joint(joint_id: int, position: float, bus_serial: str = "auto") -
 async def move_arm_pose(
     joint_positions: dict[int, float],
     bus_serial: str = "auto",
+    wait: bool = False,
 ) -> str:
     """Move multiple arm joints at once. Example: {1: 0.5, 2: 0.3, 3: 0.8}.
 
     Keys are joint ids (motor ids). Values are normalized 0.0-1.0 within each
     joint's calibrated range. Gripper is not included — control it separately.
+    Set wait=true to block until joints reach the target before returning.
     """
+    from .pick_control import MOTION_TIMEOUT_S, POSE_TOLERANCE, STABLE_READS
+
     session = get_session()
-    return _json(await session.move_arm_pose(joint_positions, bus_serial))
+    joints = {int(k): float(v) for k, v in joint_positions.items()}
+    result = await session.move_arm_pose(joints, bus_serial)
+    if wait:
+        result["motion_settled"] = await session.wait_for_arm_pose(
+            joints,
+            tolerance=POSE_TOLERANCE,
+            stable_reads=STABLE_READS,
+            timeout_s=MOTION_TIMEOUT_S,
+            bus_serial=bus_serial,
+        )
+    return _json(result)
 
 
 @mcp.tool
@@ -348,6 +367,141 @@ async def save_pick_reference(
     session = get_session()
     payload = await _save(session, board_x=board_x, board_y=board_y, bus_serial=bus_serial)
     return _json({"saved": True, **payload})
+
+
+# ── Board squares (5×3 grid, squares 1–15) ───────────────────────────────────
+
+
+@mcp.tool
+async def list_square_poses() -> str:
+    """List all board squares with joint targets (recorded or interpolated from calibration)."""
+    from .square_control import list_square_poses as _list
+
+    return _json(_list())
+
+
+@mcp.tool
+async def get_square_pose(square_id: int) -> str:
+    """Return joint targets and offset for one board square (1–15 on the default 5×3 grid)."""
+    from .square_control import joint_targets_for_square
+
+    return _json(joint_targets_for_square(square_id))
+
+
+@mcp.tool
+async def go_to_square(
+    square_id: int,
+    pick: bool = True,
+    lift_after: bool = False,
+    return_home: bool = False,
+    bus_serial: str = "auto",
+) -> str:
+    """Move to a board square by id (1–15), then fully close the gripper to pick.
+
+    Uses recorded joint coordinates when available (e.g. squares 8, 9, 10, 14, 15);
+    other squares are interpolated from calibration samples. Set pick=false to only move.
+    Use lift_after=true to return home while holding the object (gripper stays closed).
+    """
+    from .square_control import go_to_square as _go_to_square
+
+    session = get_session()
+    return _json(
+        await _go_to_square(
+            session,
+            square_id,
+            pick=pick,
+            lift_after=lift_after,
+            return_home=return_home,
+            bus_serial=bus_serial,
+        )
+    )
+
+
+def _register_square_tools() -> None:
+    from .square_control import go_to_square as _go_to_square, square_count
+
+    for square_id in range(1, square_count() + 1):
+
+        async def _handler(
+            pick: bool = True,
+            lift_after: bool = False,
+            return_home: bool = False,
+            bus_serial: str = "auto",
+            *,
+            _square_id: int = square_id,
+        ) -> str:
+            session = get_session()
+            return _json(
+                await _go_to_square(
+                    session,
+                    _square_id,
+                    pick=pick,
+                    lift_after=lift_after,
+                    return_home=return_home,
+                    bus_serial=bus_serial,
+                )
+            )
+
+        _handler.__name__ = f"go_to_square_{square_id}"
+        _handler.__doc__ = (
+            f"Move to board square {square_id}, fully close gripper to pick. "
+            f"Voice: 'go to square {square_id}'. Set pick=false to only move. "
+            f"Set lift_after=true to lift home while holding."
+        )
+        mcp.tool(_handler, name=f"go_to_square_{square_id}")
+
+
+def _register_place_square_tools() -> None:
+    from .square_control import place_at_square as _place_at_square, square_count
+
+    for square_id in range(1, square_count() + 1):
+
+        async def _handler(
+            return_home: bool = False,
+            bus_serial: str = "auto",
+            *,
+            _square_id: int = square_id,
+        ) -> str:
+            session = get_session()
+            return _json(
+                await _place_at_square(
+                    session,
+                    _square_id,
+                    return_home=return_home,
+                    bus_serial=bus_serial,
+                )
+            )
+
+        _handler.__name__ = f"place_at_square_{square_id}"
+        _handler.__doc__ = (
+            f"Place a held object at board square {square_id}: move with gripper closed, "
+            f"open gripper last. Voice: 'put it in square {square_id}'."
+        )
+        mcp.tool(_handler, name=f"place_at_square_{square_id}")
+
+
+_register_square_tools()
+_register_place_square_tools()
+
+
+@mcp.tool
+async def place_at_square(
+    square_id: int,
+    return_home: bool = False,
+    bus_serial: str = "auto",
+) -> str:
+    """Place a held object at a board square: move with gripper closed, open gripper last."""
+    from .square_control import place_at_square as _place_at_square
+
+    session = get_session()
+    return _json(
+        await _place_at_square(
+            session,
+            square_id,
+            return_home=return_home,
+            bus_serial=bus_serial,
+        )
+    )
 
 
 @mcp.tool
