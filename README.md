@@ -21,6 +21,25 @@ This repository is our Berlin hackathon build on top of [NormaCore](https://norm
 
 ---
 
+## Demos
+
+<table>
+  <tr>
+    <td align="center"><b>Say hi</b><br/><code>say_hi</code><br/><img src="videos/hi.gif" width="200" alt="Say hi demo"/></td>
+    <td align="center"><b>Dance</b><br/><code>dance</code><br/><img src="videos/dance.gif" width="200" alt="Dance demo"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Pick up</b><br/><code>go_to_square</code> / pick<br/><img src="videos/pickup.gif" width="200" alt="Pick up demo"/></td>
+    <td align="center"><b>Place</b><br/><code>place_at_square</code><br/><img src="videos/put.gif" width="200" alt="Place demo"/></td>
+  </tr>
+</table>
+
+<p align="center">
+  <sub>Loops are GIF previews from <code>videos/</code>. MP4 versions available for lighter embeds — see <a href="videos/README.md">videos/README.md</a>.</sub>
+</p>
+
+---
+
 ## Hackathon development stack
 
 **Use [n8n](https://n8n.io) for voice and [Lovable](https://lovable.dev) for UI.** That was our intentional split during the hackathon: n8n orchestrates the voice agent and tool calls; Lovable prototypes the operator dashboard. The in-repo Python voice script and Station viewer changes are supporting implementations — not the primary demo path.
@@ -229,6 +248,7 @@ norma-core-berlin-hackathon/
 │   ├── gremlin_go/               # Protobuf SDK (Go)
 │   └── gremlin_py/               # Protobuf SDK (Python)
 ├── .norma/                       # Local calibration (home pose, grid, nudges)
+├── videos/                       # Demo clips (GIF / MP4 for README, MOV sources)
 ├── .cursor/mcp.json              # Cursor MCP configuration
 └── .env.example                  # Vision / Roboflow environment template
 ```
