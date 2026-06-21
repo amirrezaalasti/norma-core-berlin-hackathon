@@ -126,10 +126,10 @@ async def run_agent():
                             chunk_lower = chunk_text.lower()
                             
                             start_match = re.search(r'hey\s*[,.]*\s*joe', chunk_lower)
+                            full_text = ""
+                            
                             if start_match:
-                                is_recording = True
-                                current_phrase = []
-                                print("\n\033[92m[STARTED RECORDING COMMAND]\033[0m Speak your command...")
+                                print("\n\033[92m[WAKE WORD DETECTED]\033[0m")
                                 
                                 # Extract anything said AFTER 'hey joe'
                                 start_idx = start_match.end()
@@ -139,31 +139,27 @@ async def run_agent():
                                     # Strip leading punctuation that might be left over
                                     after_text = re.sub(r'^[.,!?\s]+', '', after_text)
                                     if after_text:
-                                        current_phrase.append(after_text)
-                                        print(f"\r\033[KUser: {' '.join(current_phrase)}", end="", flush=True)
+                                        full_text = after_text
+                                        is_recording = False
+                                
+                                if not full_text:
+                                    # User just said 'hey joe'. Wait for their command phrase.
+                                    is_recording = True
+                                    print("Speak your command...")
+                                    continue
+                                    
+                            elif is_recording:
+                                # User said their command after the wake word
+                                full_text = chunk_text
+                                is_recording = False
+                            else:
+                                # Not recording and no wake word detected, ignore
                                 continue
                                 
-                            # Check for various natural ways to end the command
-                            end_match = re.search(r'(?:command|joe)\s*[,.]*\s*(?:end|stop)|(?:end|stop)\s*[,.]*\s*(?:command|joe)', chunk_lower)
-                            if end_match and is_recording:
-                                is_recording = False
-                                
-                                # Extract anything said BEFORE 'command end'
-                                end_idx = end_match.start()
-                                
-                                if end_idx > 0:
-                                    before_text = chunk_text[:end_idx].strip()
-                                    if before_text:
-                                        current_phrase.append(before_text)
-                                
+                            # If we reached here, we have a completed command to execute
+                            if full_text.strip():
+                                print(f"User: {full_text}")
                                 print("\n\033[93m[COMMAND RECORDED]\033[0m Sending to AI...")
-                                
-                                full_text = " ".join(current_phrase)
-                                current_phrase = []
-                                
-                                if not full_text.strip():
-                                    print("Empty command. Listening for 'hey joe'...")
-                                    continue
                                 
                                 messages.append({"role": "user", "content": full_text})
                                 
@@ -215,10 +211,6 @@ async def run_agent():
                                         # GPT didn't call any more tools, we're done processing this voice command
                                         print("\nListening for 'hey joe'...")
                                         break
-                                        
-                            elif is_recording:
-                                current_phrase.append(chunk_text)
-                                print(f"\r\033[KUser: {' '.join(current_phrase)}", end="", flush=True)
                                 
                         except Exception as e:
                             pass # Silently ignore transcription errors on chunks to avoid clutter
