@@ -1,5 +1,7 @@
 # NormaCore Station Vision
 
+> Part of the [NormaCore Berlin Hackathon](../../../README.md) project.
+
 Local object detection for the Station camera overlay and optional arm control via SmolVLA / MCP pick.
 
 ## Camera overlay (browser)

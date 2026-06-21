@@ -1,5 +1,7 @@
 # NormaCore Voice Assistant
 
+> Part of the [NormaCore Berlin Hackathon](../../../README.md) project.
+
 A standalone Python agent that uses your microphone, OpenAI's Whisper STT, GPT-4o, and the NormaCore MCP server to control the ST3215 robot arm via voice.
 
 ## Prerequisites
@@ -35,3 +37,5 @@ Example commands:
 - *"Go right"* / *"Move up"* (uses `move_direction`)
 - *"Open the gripper"*
 - *"Pick up the object"*
+- *"Go to square 9"* / *"Put it in square 5"*
+- *"Say hi"* / *"Dance"*
