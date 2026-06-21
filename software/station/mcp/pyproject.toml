@@ -9,6 +9,9 @@ dependencies = [
   "numpy>=1.26",
 ]
 
+[project.optional-dependencies]
+sim = ["pybullet>=3.2"]
+
 [project.scripts]
 norma-station-mcp = "norma_station_mcp.server:main"
 

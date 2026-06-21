@@ -19,8 +19,13 @@ from .paths import setup_import_paths
 
 setup_import_paths()
 
+STATION_MOCK = os.environ.get("STATION_MOCK") == "1"
+
 try:
-    from station_py import new_station_client, send_commands
+    if STATION_MOCK:
+        from .fake_station import new_station_client, send_commands
+    else:
+        from station_py import new_station_client, send_commands
     from target.gen_python.protobuf.drivers.st3215 import st3215
     from target.gen_python.protobuf.station import commands, drivers
 except ImportError as exc:
@@ -38,6 +43,15 @@ def _station_host() -> str:
 # been verified against real hardware (see kinematics.py module docstring for the
 # unverified normalized<->radians calibration assumption this guards against).
 TESTING_MAX_MOVE_DELTA_M = 0.05
+
+# Placeholder workspace floor, in meters, relative to HOME_POSE_XYZ (see kinematics.py's
+# "Origin/home convention" -- HOME_POSE_XYZ is the *gripper's* position at rest, not the
+# robot's base). kinematics._home_offset_xyz()'s z component (~0.110m) is how far above
+# the base_link origin the gripper sits at home; -0.10 approximates "don't go below
+# roughly the base/mounting level" (a reasonable proxy for table height when the base is
+# table-mounted) with a little margin. This is still an uncalibrated approximation, not
+# a measured real table height -- recalibrate once that's actually measured on hardware.
+MIN_SAFE_Z_M = -0.10
 
 
 class StationSession:
@@ -229,6 +243,49 @@ class StationSession:
             ).encode(),
         )
 
+    def _check_workspace_floor_for_joint_move(
+        self,
+        positions: dict[int, float],
+        profile: ArmProfile,
+        resolved_serial: str,
+    ) -> None:
+        """Reject a joint-space move that would put the gripper below MIN_SAFE_Z_M.
+
+        Joint-space moves (move_joint/move_arm_pose/sweep-style demos) had no floor
+        protection at all -- only the Cartesian path (move_to_xyz) did -- even though a
+        joint-space move can just as easily drive the arm into the table. This mirrors
+        move_to_xyz's floor check, just computed via forward kinematics over the
+        *resulting* full joint configuration (proposed positions merged over the arm's
+        current state) instead of taking Z directly from the caller.
+        """
+        if profile.name != "elrobot":
+            return
+        arm_joint_ids = set(profile.joint_motor_ids)
+        proposed_arm_positions = {k: v for k, v in positions.items() if k in arm_joint_ids}
+        if not proposed_arm_positions:
+            return  # gripper-only move -- the gripper isn't part of the IK chain
+
+        arm_state = self.get_arm_state(resolved_serial)
+        joint_rad: dict[int, float] = {}
+        for joint in arm_state["joints"]:
+            motor_id = joint["motor_id"]
+            if motor_id not in proposed_arm_positions and "present_position_normalized" not in joint:
+                raise RuntimeError(
+                    f"Motor {motor_id} is not calibrated (no range_min/range_max); "
+                    "cannot verify the workspace safety floor for this move"
+                )
+            normalized = proposed_arm_positions.get(motor_id, joint.get("present_position_normalized"))
+            joint_rad[motor_id] = kinematics.normalized_to_radians(normalized, motor_id)
+
+        xyz = kinematics.forward_kinematics(joint_rad)
+        if xyz[2] < MIN_SAFE_Z_M:
+            raise RuntimeError(
+                f"Refusing move: resulting position {list(xyz)} has z={xyz[2]:.3f} m, "
+                f"below the workspace safety floor of {MIN_SAFE_Z_M} m. See "
+                "MIN_SAFE_Z_M in session.py -- this is an uncalibrated placeholder, not "
+                "a measured table height."
+            )
+
     async def move_motors_normalized(
         self,
         positions: dict[int, float],
@@ -242,6 +299,7 @@ class StationSession:
             raise ValueError("positions must not be empty")
 
         resolved_serial, _, profile = self._resolve_bus(bus_serial)
+        self._check_workspace_floor_for_joint_move(positions, profile, resolved_serial)
         goal_writes: list[tuple[int, bytes]] = []
         resolved_targets: dict[str, dict[str, Any]] = {}
 
@@ -368,6 +426,19 @@ class StationSession:
         motor command) a target more than that far from the gripper's current position.
         Temporary guardrail while the normalized<->radians calibration mapping is
         unverified against real hardware -- raise or remove once it's confirmed.
+
+        Also rejects targets below MIN_SAFE_Z_M (a placeholder workspace floor -- see
+        that constant's docstring).
+
+        Seeds the IK solve with the arm's current joint configuration (not the all-zero
+        default) -- this is a 7-DOF arm solving a 3-DOF position-only target, so there's
+        a continuous family of joint configurations reaching any given point. Without a
+        seed near the current pose, the optimizer converges to an arbitrary point in
+        that redundant space on every call, independent of the previous one -- visibly,
+        joints with no real reason to move (e.g. wrist roll) would jump around between
+        consecutive small Cartesian moves. Seeding from "where the arm already is" makes
+        the solver converge to the *nearest* valid solution instead, so small moves stay
+        smooth and redundant joints don't wander without cause.
         """
         await self.ensure_connected()
         await self.wait_for_inference()
@@ -375,6 +446,13 @@ class StationSession:
         self._require_elrobot(profile)
 
         target = [float(v) for v in target_xyz]
+        if target[2] < MIN_SAFE_Z_M:
+            raise RuntimeError(
+                f"Refusing move: target {target} has z={target[2]:.3f} m, below the "
+                f"workspace safety floor of {MIN_SAFE_Z_M} m. See MIN_SAFE_Z_M in "
+                "session.py -- this is an uncalibrated placeholder, not a measured "
+                "table height."
+            )
         current = await self.get_gripper_xyz(resolved_serial)
         delta_m = math.dist(current["xyz"], target)
         if delta_m > TESTING_MAX_MOVE_DELTA_M:
@@ -386,7 +464,7 @@ class StationSession:
                 "real hardware."
             )
 
-        joint_rad = kinematics.solve_ik(target)
+        joint_rad = kinematics.solve_ik(target, initial_joint_rad=current["joint_rad"])
         normalized = kinematics.joint_rad_dict_to_normalized(joint_rad)
         result = await self.move_motors_normalized(normalized, resolved_serial)
         result["target_xyz"] = target
@@ -490,6 +568,57 @@ class StationSession:
             "approach_height_m": approach_height_m,
             "steps": [{"step": name, "result": result} for name, result in steps],
         }
+
+    async def go_home(self, bus_serial: str = "auto") -> dict[str, Any]:
+        """Move all arm joints directly to kinematics.HOME_JOINT_RAD (the empirically
+        safe, obstruction-free resting pose -- see kinematics.py's "Origin/home
+        convention"). ElRobot only.
+
+        Goes straight to joint-space via move_arm_pose rather than through move_to_xyz,
+        since HOME_JOINT_RAD already *is* the joint angles -- routing it through IK
+        would mean re-solving for a pose we already know exactly, for no benefit and
+        with needless convergence risk.
+        """
+        await self.ensure_connected()
+        await self.wait_for_inference()
+        resolved_serial, _, profile = self._resolve_bus(bus_serial)
+        self._require_elrobot(profile)
+
+        normalized = kinematics.joint_rad_dict_to_normalized(kinematics.HOME_JOINT_RAD)
+        result = await self.move_arm_pose(normalized, resolved_serial)
+        result["pose"] = "home"
+        return result
+
+    async def move_through_waypoints(
+        self,
+        waypoints: list[list[float]],
+        bus_serial: str = "auto",
+    ) -> dict[str, Any]:
+        """Move the gripper through a sequence of Cartesian points in order, via
+        repeated move_to_xyz calls. ElRobot only. Raises immediately on any waypoint's
+        failure (e.g. TESTING_MAX_MOVE_DELTA_M or MIN_SAFE_Z_M rejection, or IK
+        non-convergence) -- no partial-completion recovery, matching pick_at_xyz/
+        place_at_xyz. Earlier waypoints already reached are not undone.
+
+        Covers circle/figure-eight traces and fixed multi-waypoint trajectories (e.g.
+        pick zone -> transit -> drop zone) -- generate the point list and pass it in.
+        For replaying a recorded joint-angle sequence from a file, read the file and
+        call move_arm_pose per entry instead; this tool is XYZ-only.
+        """
+        await self.ensure_connected()
+        await self.wait_for_inference()
+        resolved_serial, _, profile = self._resolve_bus(bus_serial)
+        self._require_elrobot(profile)
+
+        if not waypoints:
+            raise ValueError("waypoints must not be empty")
+
+        steps = []
+        for index, point in enumerate(waypoints):
+            result = await self.move_to_xyz(point, resolved_serial)
+            steps.append({"index": index, "target_xyz": [float(v) for v in point], "result": result})
+
+        return {"waypoint_count": len(waypoints), "steps": steps}
 
     async def move_motor_steps(
         self,

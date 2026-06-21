@@ -5,3 +5,6 @@ __pycache__
 js-vendor/
 # Station's runtime WAL/store database (default path, created on every run).
 station_data/
+# fake_station.py's STATION_MOCK state hand-off files for sim_visualizer.py.
+.fake_station_state.json*
+.current_motion_label.txt*

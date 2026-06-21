@@ -21,7 +21,11 @@ mcp = FastMCP(
         "- enable_arm_torque / disable_arm_torque: power all motors\n"
         "- move_gripper_to_xyz / pick_at_xyz / place_at_xyz: Cartesian (XYZ, meters, "
         "base_link frame) control via inverse kinematics -- ElRobot only. "
-        "get_gripper_xyz reads current XYZ.\n\n"
+        "get_gripper_xyz reads current XYZ.\n"
+        "- go_home: return all arm joints to the safe resting pose in one motion -- "
+        "ElRobot only.\n"
+        "- move_through_waypoints: sequence of Cartesian points (circle traces, fixed "
+        "trajectories) -- ElRobot only.\n\n"
         "Joint ids match motor ids (SO-101: joints 1-5, gripper 6; ElRobot: joints 1-7, gripper 8).\n"
         "Joint-space positions are normalized 0.0-1.0 per motor; Cartesian tools take XYZ meters instead.\n"
         "Low-level advanced_* tools exist for debugging."
@@ -198,6 +202,33 @@ async def place_at_xyz(
             target_xyz, approach_height_m=approach_height_m, bus_serial=bus_serial
         )
     )
+
+
+@mcp.tool
+async def go_home(bus_serial: str = "auto") -> str:
+    """Move all arm joints to the empirically-safe home/resting pose in one motion.
+
+    ElRobot only. Use this to return to a known-safe configuration -- e.g. before
+    shutdown, or to recover a known starting point for a scripted motion sequence.
+    """
+    session = get_session()
+    return _json(await session.go_home(bus_serial))
+
+
+@mcp.tool
+async def move_through_waypoints(waypoints: list[list[float]], bus_serial: str = "auto") -> str:
+    """Move the gripper through a sequence of Cartesian points [x, y, z] (meters,
+    base_link frame) in order, via inverse kinematics. ElRobot only.
+
+    Use this for multi-point motions: circle/figure-eight traces (generate points
+    around a center), fixed trajectories (e.g. pick zone -> transit -> drop zone), or
+    any other path describable as an ordered list of XYZ points. Each waypoint is
+    subject to the same safety checks as move_gripper_to_xyz (workspace floor, max move
+    delta). Raises immediately on any waypoint's failure -- earlier waypoints already
+    reached are not undone.
+    """
+    session = get_session()
+    return _json(await session.move_through_waypoints(waypoints, bus_serial))
 
 
 # ── Advanced / low-level ─────────────────────────────────────────────────────
