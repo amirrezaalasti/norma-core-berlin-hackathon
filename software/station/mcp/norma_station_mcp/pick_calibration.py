@@ -384,6 +384,15 @@ def joint_targets_from_calibration_samples(
     parsed = _pick_samples_from_calibration(calibration)
 
     if planning_mode == "static_hardcoded":
+        fixed = calibration.get("fixed_pick_joint_positions") or calibration.get(
+            "reference_pick_joint_positions"
+        )
+        if fixed:
+            return {
+                joint_id: max(0.0, min(1.0, float(fixed[str(joint_id)])))
+                for joint_id in home_joints
+                if str(joint_id) in fixed
+            }
         if not parsed:
             return None
         tx, ty = float(offset_xy[0]), float(offset_xy[1])

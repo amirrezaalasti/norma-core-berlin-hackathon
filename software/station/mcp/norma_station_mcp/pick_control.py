@@ -297,13 +297,13 @@ def pick_target_from_detection(
     )
 
     gripper_pick = None
+    close_gripper_at_pick = False
     if calibration is not None:
         if calibration.get("planning_mode") == "static_hardcoded":
             planning_mode = "static_hardcoded"
-            from .pick_calibration import nearest_sample_from_calibration
-            nearest = nearest_sample_from_calibration((float(offset[0]), float(offset[1])), calibration)
-            if nearest is not None and "gripper_pick" in nearest:
-                gripper_pick = nearest["gripper_pick"]
+            close_gripper_at_pick = bool(calibration.get("gripper_close_at_pick", True))
+            if not close_gripper_at_pick:
+                gripper_pick = calibration.get("gripper_pick")
 
     res = {
         "class_name": detection.get("class_name"),
@@ -317,6 +317,8 @@ def pick_target_from_detection(
     }
     if gripper_pick is not None:
         res["gripper_pick"] = gripper_pick
+    if close_gripper_at_pick:
+        res["close_gripper_at_pick"] = True
     return res
 
 
@@ -413,7 +415,13 @@ async def pick_nearest_object(
         )
 
     await session.ensure_connected()
-    vision = await detect_workspace_objects(camera_index=0)
+    
+    # Try fetching vision detections for reference / logging, but do not crash or fail if empty
+    try:
+        vision = await detect_workspace_objects(camera_index=0)
+    except Exception:
+        vision = {}
+        
     workspace = manual_workspace
     raw_detections = vision.get("detections", [])
     detections = _apply_manual_workspace_to_detections(raw_detections, manual_workspace)
@@ -422,17 +430,28 @@ async def pick_nearest_object(
         for item in detections
         if item.get("offset_xy") is not None and item.get("distance") is not None
     ]
-    if not detections:
-        raise RuntimeError("No objects detected with gripper-relative offsets")
+    target_detection = min(detections, key=lambda item: float(item["distance"])) if detections else None
 
-    target_detection = min(detections, key=lambda item: float(item["distance"]))
-    units = _detection_units(workspace)
-    pick_plan = pick_target_from_detection(
-        home,
-        target_detection,
-        home["arm_type"],
-        units=units,
-    )
+    # Static hardcoded pick pose requested by the user
+    pick_plan = {
+        "class_name": target_detection.get("class_name") if target_detection else "static_pick",
+        "confidence": target_detection.get("confidence") if target_detection else 1.0,
+        "offset_xy": target_detection.get("offset_xy") if target_detection else [0.0, 0.0],
+        "distance": target_detection.get("distance") if target_detection else 0.0,
+        "units": "mm",
+        "planning_mode": "static_hardcoded_user",
+        "joint_targets_from_home": {
+            1: 0.5533,
+            2: 0.8377,
+            3: 0.5661,
+            4: 0.4003,
+            5: 0.4669,
+            6: 0.8688,
+            7: 0.2392
+        },
+        "home_joint_positions": home["joint_positions"],
+        "gripper_pick": 0.4665
+    }
 
     await session.wait_for_inference()
     await session.enable_arm_torque(bus_serial)
@@ -440,16 +459,9 @@ async def pick_nearest_object(
     await session.move_arm_pose(pick_plan["joint_targets_from_home"], bus_serial)
     await asyncio.sleep(settle_s)
 
-    gripper_pick = pick_plan.get("gripper_pick")
-    if gripper_pick is None:
-        from .pick_calibration import load_pick_calibration
-        calibration = load_pick_calibration()
-        gripper_pick = (calibration or {}).get("gripper_pick")
-
-    if gripper_pick is not None:
-        await session.set_gripper(float(gripper_pick), bus_serial)
-    else:
-        await session.close_gripper(bus_serial)
+    gripper_pick = pick_plan["gripper_pick"]
+    await session.set_gripper(float(gripper_pick), bus_serial)
+    await asyncio.sleep(1.0)
 
     result: dict[str, Any] = {
         "picked": target_detection,

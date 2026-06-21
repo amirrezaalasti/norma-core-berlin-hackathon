@@ -18,13 +18,22 @@
     3.2
   ],
   "reference_pick_joint_positions": {
-    "1": 0.5717,
-    "2": 0.869,
-    "3": 0.5648,
-    "4": 0.3547,
-    "5": 0.4858,
-    "6": 0.8892,
-    "7": 0.2243
+    "1": 0.5533,
+    "2": 0.8377,
+    "3": 0.5661,
+    "4": 0.4003,
+    "5": 0.4669,
+    "6": 0.8688,
+    "7": 0.2392
+  },
+  "fixed_pick_joint_positions": {
+    "1": 0.5533,
+    "2": 0.8377,
+    "3": 0.5661,
+    "4": 0.4003,
+    "5": 0.4669,
+    "6": 0.8688,
+    "7": 0.2392
   },
   "reference_offset_mm": [
     46.4,
@@ -218,7 +227,8 @@
     }
   },
   "gripper_home": 0.5911,
-  "gripper_pick": 0.4725,
+  "gripper_pick": null,
+  "gripper_close_at_pick": true,
   "workspace": {
     "corners_xy": [
       [
@@ -257,5 +267,5 @@
     "tag_inset_mm": 25,
     "gripper_tip_set": true
   },
-  "note": "Static hardcoded poses. No calibration scales or interpolation used."
+  "note": "Fixed pick pose from live motor dump (2026-06-21). Always move to fixed_pick_joint_positions; close gripper after approach (gripper position in dump is post-grasp locked)."
 }
