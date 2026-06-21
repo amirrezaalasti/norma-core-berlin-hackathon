@@ -1,0 +1,36 @@
+# NormaCore Voice Assistant
+
+A standalone Python agent that uses your microphone, OpenAI's Whisper STT, GPT-4o, and the NormaCore MCP server to control the ST3215 robot arm via voice.
+
+## Prerequisites
+
+1.  **uv**: Python package manager
+2.  **Microphone**: A working microphone connected to your computer.
+3.  **OpenAI API Key**: For Whisper STT and GPT-4o.
+
+## Installation
+
+1. Copy `.env.example` to `.env` and insert your OpenAI API key:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your favorite editor
+   ```
+
+2. Make sure the NormaCore Station is running in another terminal (with `--tcp` enabled, which is the default).
+
+## Usage
+
+Run the agent using `uv`:
+
+```bash
+uv run agent.py
+```
+
+It will install the dependencies, connect to the MCP server, load the tools, and start listening to your microphone.
+When it prints `READY!`, you can start speaking.
+
+Example commands:
+- *"What is the current arm state?"*
+- *"Open the gripper"*
+- *"Move joint 1 to position 0.5"*
+- *"Close the gripper and move joint 2 to 0.1"*
