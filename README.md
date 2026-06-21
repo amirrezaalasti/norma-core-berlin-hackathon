@@ -4,7 +4,7 @@
 
 This repository is our Berlin hackathon build on top of [NormaCore](https://normacore.dev) — an open robotics platform for real-time arm control, data collection, and deployment. We extended it with an MCP server, a voice assistant, vision-guided workspace calibration, and high-level pick/place tools so you can operate an ST3215 arm (ElRobot or SO-101) from **Claude Code in the terminal**, Cursor, natural language, or speech.
 
-📊 [Project Presentation](https://github.com/amirrezaalasti/norma-core-berlin-hackathon/blob/main/NormaCore_Team1.pdf))
+📊 [Project Presentation](https://github.com/amirrezaalasti/norma-core-berlin-hackathon/blob/main/NormaCore_Team1.pdf)
 
 **[How to run →](#how-to-run)**
 
