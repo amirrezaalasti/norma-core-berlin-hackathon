@@ -4,6 +4,8 @@
 
 This repository is our Berlin hackathon build on top of [NormaCore](https://normacore.dev) — an open robotics platform for real-time arm control, data collection, and deployment. We extended it with an MCP server, a voice assistant, vision-guided workspace calibration, and high-level pick/place tools so you can operate an ST3215 arm (ElRobot or SO-101) from Cursor, natural language, or speech.
 
+**[How to run →](#how-to-run)**
+
 ---
 
 ## What we built
@@ -96,24 +98,29 @@ flowchart LR
 
 ---
 
-## Quick start
+## How to run
+
+End-to-end steps to reproduce the demos above. You need **two things running**: NormaCore Station (talks to the arm over USB) and a **control layer** (Cursor MCP, n8n, or the Python voice agent).
 
 ### Prerequisites
 
-- macOS (Apple Silicon tested) or Linux
-- ST3215 robot arm connected via USB (ElRobot 7+1 DoF or SO-101 5+1 DoF)
-- [uv](https://docs.astral.sh/uv/) — `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- Generated protobufs (from repo root):
+| Requirement | Check |
+|-------------|-------|
+| ElRobot or SO-101 on USB | `ls /dev/cu.usb*` (macOS) — should list a `usbmodem` device |
+| [uv](https://docs.astral.sh/uv/) | `uv --version` |
+| Protobufs generated | From repo root: `make protobuf` |
+
+Clone and enter the repo:
 
 ```bash
+git clone https://github.com/amirrezaalasti/norma-core-berlin-hackathon.git
+cd norma-core-berlin-hackathon
 make protobuf
 ```
 
-### 1. Start NormaCore Station
+### Terminal 1 — Start Station (always required)
 
-Station bridges USB motors to a TCP API on port **8888** and serves the web UI on **8889**.
-
-**Prebuilt binary (recommended):**
+Station exposes the arm on TCP **8888** and the web UI on **8889**.
 
 ```bash
 mkdir -p .tmp/station && cd .tmp/station
@@ -127,75 +134,94 @@ cp ../../software/station/bin/station/station.yaml .
 RUST_LOG=info ./station --tcp --web --config station.yaml
 ```
 
-Open **http://localhost:8889** to verify live motor data and the camera overlay.
+Leave this running. Verify:
 
-Full setup options (build from source, desktop app, troubleshooting): [`software/station/mcp/README.md`](software/station/mcp/README.md)
+- Browser: **http://localhost:8889** — live joints + camera
+- Logs show 8 motors (ElRobot) or 6 (SO-101) and `NormFS server listening on 0.0.0.0:8888`
 
-### 2. Control from Cursor (MCP)
+More options (build from source, desktop app): [`software/station/mcp/README.md`](software/station/mcp/README.md)
 
-The repo ships `.cursor/mcp.json`. After station is running:
+### Terminal 2 — Pick a control path
 
-1. Reload MCP servers in Cursor (Settings → MCP → refresh)
-2. Confirm **norma-station** appears with tools like `get_arm_state`, `go_home`, `pick_object`
+Choose **one** of the following.
 
-Example prompts:
+#### A) Cursor + MCP (fastest to try)
 
-- *"What is the arm state?"*
-- *"Go home and open the gripper"*
-- *"Pick up the object and lift"*
-- *"Go to square 9"*
-- *"Say hi"*
+1. Open this repo in **Cursor**
+2. Settings → **MCP** → refresh — confirm **norma-station** is connected
+3. Chat with the robot, e.g.:
 
-### 3. Voice control
+   - *"Enable arm torque and go home"*
+   - *"Say hi"* → matches [`videos/hi.gif`](videos/hi.gif)
+   - *"Dance"* → matches [`videos/dance.gif`](videos/dance.gif)
+   - *"Go to square 9 and pick"* → matches [`videos/pickup.gif`](videos/pickup.gif)
+   - *"Place at square 15"* → matches [`videos/put.gif`](videos/put.gif)
+   - *"Move the object from position 9 to position 15"* → `transfer_object`
 
-We run voice two ways. **Prefer n8n** for demos and iteration; use the **local Python agent** when you want a single-repo script calling the Codex/OpenAI API directly.
+MCP is configured in [`.cursor/mcp.json`](.cursor/mcp.json) (`STATION_HOST=localhost:8888`).
 
-#### Option A — n8n voice workflow (recommended)
+#### B) Voice — n8n (recommended for demos)
 
-The production demo path hosts the voice agent in **[n8n](https://n8n.io)**:
+1. Start your **[n8n](https://n8n.io)** instance and import/open the voice workflow
+2. Set credentials: OpenAI/Codex API key, `STATION_HOST=localhost:8888`
+3. Activate the workflow — wake word *"hey joe"*, then speak commands (same as Cursor examples above)
 
-1. **Trigger** — microphone / webhook / scheduled listen (wake word: *"hey joe"*)
-2. **STT** — Whisper or n8n speech node → transcript
-3. **LLM** — OpenAI / Codex with MCP tool definitions (`go_home`, `transfer_object`, `say_hi`, …)
-4. **MCP / HTTP** — call `norma-station` tools against Station on `localhost:8888`
-5. **TTS** (optional) — short spoken confirmation
+See [`software/station/mcp/README.md` — Voice agent (n8n)](software/station/mcp/README.md#voice-agent-n8n--codex-api).
 
-Benefits: change system prompts and tool wiring in the n8n canvas without touching Python; easy to add logging, retries, and Slack/Discord notifications.
-
-Import or recreate the workflow in your n8n instance, point MCP/HTTP nodes at the running Station + MCP server, and ensure `STATION_HOST=localhost:8888`.
-
-#### Option B — Python agent + Codex/OpenAI API (direct)
-
-The repo includes a standalone script that talks to the **Codex/OpenAI API** directly (no n8n):
+#### C) Voice — Python agent (Codex/OpenAI API direct)
 
 ```bash
 cd software/agents/voice_assistant
-cp .env.example .env   # add OPENAI_API_KEY (Codex-compatible OpenAI endpoint)
+cp .env.example .env    # set OPENAI_API_KEY
 uv run agent.py
 ```
 
-Flow: microphone → Whisper STT → Chat Completions + tool calls → MCP stdio → `norma-station-mcp` → Station.
-
-When you see `READY!`, speak naturally:
-
-- *"Go right"*, *"Move up a bit"*
-- *"Pick up the object"*
-- *"Move the object from position 9 to position 15"* → `transfer_object`
-- *"Hey Joe, can you hear me?"* → `acknowledge`
+When you see `READY!`, speak naturally (*"go home"*, *"say hi"*, *"move from 9 to 15"*, etc.).
 
 Details: [`software/agents/voice_assistant/README.md`](software/agents/voice_assistant/README.md)
 
-### 4. Vision & workspace calibration (optional)
-
-Copy `.env.example` to the repo root as `.env` and configure Roboflow if using cloud detection:
+#### D) MCP server only (debug / scripts)
 
 ```bash
-cp .env.example .env
+# From repo root — stdio MCP (used by Cursor and the voice agent)
+uv run --project software/station/mcp python -m norma_station_mcp
 ```
 
-In the station viewer: switch to **camera view** → click the **scan icon** for live object detection. Calibrate the workspace board for grid pick/place.
+Test connection without MCP:
+
+```bash
+uv run --project software/station/mcp python -c "
+import asyncio, json
+from norma_station_mcp.session import StationSession
+
+async def main():
+    s = StationSession('localhost:8888')
+    await s.ensure_connected()
+    print(json.dumps(s.get_arm_state(), indent=2))
+
+asyncio.run(main())
+"
+```
+
+### Optional — Vision & board calibration
+
+Before grid pick/place works on your desk, calibrate once in the Station viewer:
+
+1. Open **http://localhost:8889** → camera view
+2. Calibrate workspace corners + gripper tip (scan icon for live detection)
+3. Poses are saved under `.norma/`
+
+```bash
+cp .env.example .env   # optional: ROBOFLOW_API_KEY for cloud detection
+```
 
 Details: [`software/station/vision/README.md`](software/station/vision/README.md)
+
+### Stop everything
+
+- Station terminal: **Ctrl+C**
+- Voice agent: **Ctrl+C**
+- n8n: deactivate workflow in the UI
 
 ---
 
@@ -301,7 +327,19 @@ This hackathon fork builds on the full NormaCore toolkit:
 | Voice assistant errors | n8n: check workflow credentials and MCP/HTTP node URL; direct agent: set `OPENAI_API_KEY` in `software/agents/voice_assistant/.env` |
 | Vision shows pixels not mm | Calibrate with AprilTags or camera intrinsics/extrinsics |
 
-See also: [MCP setup guide](software/station/mcp/README.md) · [Vision guide](software/station/vision/README.md)
+See [How to run](#how-to-run) for the full setup. Quick copy-paste:
+
+```bash
+# Terminal 1 — station
+cd .tmp/station && RUST_LOG=info ./station --tcp --web --config station.yaml
+
+# Terminal 2 — voice (direct API)
+cd software/agents/voice_assistant && uv run agent.py
+
+# Or use Cursor MCP / n8n (see README)
+```
+
+More detail: [`software/station/mcp/README.md`](software/station/mcp/README.md) · [`software/agents/voice_assistant/README.md`](software/agents/voice_assistant/README.md)
 
 ---
 
