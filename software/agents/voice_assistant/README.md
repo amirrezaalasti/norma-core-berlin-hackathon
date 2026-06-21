@@ -2,40 +2,65 @@
 
 > Part of the [NormaCore Berlin Hackathon](../../../README.md) project.
 
-A standalone Python agent that uses your microphone, OpenAI's Whisper STT, GPT-4o, and the NormaCore MCP server to control the ST3215 robot arm via voice.
+Voice control for the ST3215 arm: speech → LLM tool calls → NormaCore MCP → Station.
 
-## Prerequisites
+**For demos, run the voice agent in [n8n](https://n8n.io)** — that is our recommended path. This folder is the **direct Codex/OpenAI API** implementation for local development and testing without n8n.
 
-1.  **uv**: Python package manager
-2.  **Microphone**: A working microphone connected to your computer.
-3.  **OpenAI API Key**: For Whisper STT and GPT-4o.
+---
 
-## Installation
+## Recommended: n8n voice workflow
 
-1. Copy `.env.example` to `.env` and insert your OpenAI API key:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your favorite editor
-   ```
+Host the agent in **n8n** so prompts, wake-word handling, and MCP wiring are editable in a visual workflow:
 
-2. Make sure the NormaCore Station is running in another terminal (with `--tcp` enabled, which is the default).
+1. **Trigger** — microphone input, webhook, or manual test
+2. **STT** — OpenAI Whisper (or n8n speech node)
+3. **LLM** — OpenAI / Codex with `norma-station` tool definitions
+4. **Execute** — HTTP or MCP node → `go_home`, `transfer_object`, `say_hi`, etc.
+5. **TTS** (optional) — short spoken confirmation
 
-## Usage
+Point execution nodes at Station (`STATION_HOST=localhost:8888`) and the MCP server. See the [MCP README voice section](../../station/mcp/README.md#voice-agent-n8n--codex-api) and root [development stack](../../../README.md#hackathon-development-stack).
 
-Run the agent using `uv`:
+---
+
+## Alternative: Python agent (Codex / OpenAI API direct)
+
+Standalone script: microphone → Whisper → Chat Completions with tools → MCP stdio → `norma-station-mcp`.
+
+### Prerequisites
+
+1. **uv** — Python package manager
+2. **Microphone** — connected to your computer
+3. **OpenAI API key** — Whisper STT + Codex/GPT tool-calling (same OpenAI-compatible endpoint)
+4. **NormaCore Station** — running with `--tcp` (port 8888)
+
+### Installation
+
+```bash
+cp .env.example .env
+# Set OPENAI_API_KEY in .env
+```
+
+### Usage
 
 ```bash
 uv run agent.py
 ```
 
-It will install the dependencies, connect to the MCP server, load the tools, and start listening to your microphone.
-When it prints `READY!`, you can start speaking.
+When it prints `READY!`, speak naturally:
 
-Example commands:
 - *"What is the current arm state?"*
 - *"Go to home position"*
-- *"Go right"* / *"Move up"* (uses `move_direction`)
-- *"Open the gripper"*
-- *"Pick up the object"*
-- *"Go to square 9"* / *"Put it in square 5"*
+- *"Go right"* / *"Move up"* (`move_direction`)
+- *"Move the object from position 9 to position 15"* (`transfer_object`)
 - *"Say hi"* / *"Dance"*
+- *"Hey Joe"* → `acknowledge`, then wait for command
+
+### How it connects
+
+```
+agent.py  →  OpenAI API (Whisper + Codex/GPT tools)
+          →  MCP stdio: uv run --project software/station/mcp python -m norma_station_mcp
+          →  Station TCP localhost:8888
+```
+
+Use this when n8n is unavailable or you want a single-repo dev loop. Behavior should match the n8n workflow when both use the same system prompt and MCP tools.

@@ -11,11 +11,26 @@ This repository is our Berlin hackathon build on top of [NormaCore](https://norm
 | Capability | Description |
 |---|---|
 | **MCP server** | 50+ tools exposed to AI assistants (Cursor, Claude, etc.) for joint motion, gripper control, pick/place, and board-square navigation |
-| **Voice assistant** | Real-time speech → Whisper STT → GPT-4o → MCP tool calls → robot motion |
+| **Voice assistant** | Speech → MCP tool calls via **[n8n](https://n8n.io)** (recommended) or direct **Codex/OpenAI API** + local Python agent |
 | **Vision stack** | Browser overlay (local contrast detection), optional Roboflow API, AprilTag mm calibration, and Python offline/live pipelines |
-| **Board grid control** | 5×3 workspace grid with per-square pick and place (`go_to_square_8`, `place_at_square_3`, …) |
+| **Board grid control** | 5×3 workspace grid with per-square pick and place (`go_to_square_8`, `place_at_square_3`, `transfer_object`, …) |
 | **Pick & place** | Calibrated home pose, static pick pose, directional nudges, and lift/place sequences |
+| **Station viewer UI** | Camera overlay, manual workspace calibration, and 5×3 grid on the live feed |
+| **Lovable prototypes** | Future operator dashboard (board tap-to-move, transfer UI, voice status) — see [MCP README](software/station/mcp/README.md#ui-development-lovable--station-viewer) |
 | **Personality** | `say_hi`, `acknowledge`, `dance`, and `gripper_wave` for demos and voice interaction |
+
+---
+
+## Hackathon development stack
+
+**Use [n8n](https://n8n.io) for voice and [Lovable](https://lovable.dev) for UI.** That was our intentional split during the hackathon: n8n orchestrates the voice agent and tool calls; Lovable prototypes the operator dashboard. The in-repo Python voice script and Station viewer changes are supporting implementations — not the primary demo path.
+
+| Tool | Use for | Why |
+|------|---------|-----|
+| **[n8n](https://n8n.io)** | Voice agent workflow | Visual orchestration of wake word → STT → LLM → MCP/HTTP → robot; easy to tweak prompts and wire new tools without redeploying Python |
+| **[Lovable](https://lovable.dev)** | Operator UI | Fast React dashboard for board grid, transfer flows, and live status — see [UI section](software/station/mcp/README.md#ui-development-lovable--station-viewer) |
+| **Cursor + MCP** | Engineering / debugging | Direct access to all `norma-station` tools while calibrating and testing motion |
+| **Station viewer** | Calibration + vision | Board corners, gripper tip, camera overlay, grid — ships in this repo |
 
 ### Architecture
 
@@ -27,7 +42,8 @@ flowchart LR
   end
 
   subgraph agents [Agents]
-    VA[Voice Assistant<br/>Whisper + GPT-4o]
+    N8N[n8n Voice Workflow<br/>recommended]
+    VA[Python agent<br/>Codex / OpenAI API]
     MCP[MCP Server<br/>norma-station-mcp]
   end
 
@@ -37,18 +53,25 @@ flowchart LR
     Cam[USB Camera]
   end
 
+  subgraph ui_proto [UI — Lovable]
+    Lovable[Lovable operator dashboard<br/>prototype]
+  end
+
   subgraph robot [Hardware]
     Arm[ElRobot / SO-101]
     Board[Calibrated workspace]
   end
 
-  Voice --> VA
-  Cursor --> MCP
+  Voice --> N8N
+  Voice -.-> VA
+  N8N --> MCP
   VA --> MCP
+  Cursor --> MCP
   MCP --> TCP
   TCP --> Arm
   Cam --> UI
   Cam --> MCP
+  Lovable -.-> MCP
   Board --> Arm
 ```
 
@@ -104,20 +127,42 @@ Example prompts:
 - *"Go to square 9"*
 - *"Say hi"*
 
-### 3. Voice control (optional)
+### 3. Voice control
+
+We run voice two ways. **Prefer n8n** for demos and iteration; use the **local Python agent** when you want a single-repo script calling the Codex/OpenAI API directly.
+
+#### Option A — n8n voice workflow (recommended)
+
+The production demo path hosts the voice agent in **[n8n](https://n8n.io)**:
+
+1. **Trigger** — microphone / webhook / scheduled listen (wake word: *"hey joe"*)
+2. **STT** — Whisper or n8n speech node → transcript
+3. **LLM** — OpenAI / Codex with MCP tool definitions (`go_home`, `transfer_object`, `say_hi`, …)
+4. **MCP / HTTP** — call `norma-station` tools against Station on `localhost:8888`
+5. **TTS** (optional) — short spoken confirmation
+
+Benefits: change system prompts and tool wiring in the n8n canvas without touching Python; easy to add logging, retries, and Slack/Discord notifications.
+
+Import or recreate the workflow in your n8n instance, point MCP/HTTP nodes at the running Station + MCP server, and ensure `STATION_HOST=localhost:8888`.
+
+#### Option B — Python agent + Codex/OpenAI API (direct)
+
+The repo includes a standalone script that talks to the **Codex/OpenAI API** directly (no n8n):
 
 ```bash
 cd software/agents/voice_assistant
-cp .env.example .env   # add OPENAI_API_KEY
+cp .env.example .env   # add OPENAI_API_KEY (Codex-compatible OpenAI endpoint)
 uv run agent.py
 ```
+
+Flow: microphone → Whisper STT → Chat Completions + tool calls → MCP stdio → `norma-station-mcp` → Station.
 
 When you see `READY!`, speak naturally:
 
 - *"Go right"*, *"Move up a bit"*
 - *"Pick up the object"*
-- *"Put it in square 5"*
-- *"Hey Joe, can you hear me?"* → triggers `acknowledge`
+- *"Move the object from position 9 to position 15"* → `transfer_object`
+- *"Hey Joe, can you hear me?"* → `acknowledge`
 
 Details: [`software/agents/voice_assistant/README.md`](software/agents/voice_assistant/README.md)
 
@@ -146,6 +191,7 @@ Details: [`software/station/vision/README.md`](software/station/vision/README.md
 | `pick_object` / `lift_object` / `place_object` | Static pick/place sequence |
 | `go_to_square` / `go_to_square_N` | Move to board square 1–15 and grasp |
 | `place_at_square` / `place_at_square_N` | Place held object at a square |
+| `transfer_object` | Pick at `from_square` and place at `to_square` in one call |
 | `move_direction` | Calibrated up / down / left / right nudge |
 | `say_hi` / `acknowledge` / `dance` | Demo gestures |
 | `detect_workspace_objects` | Vision offset from gripper (optional) |
@@ -174,7 +220,7 @@ norma-core-berlin-hackathon/
 │   │   ├── clients/station-viewer/  # Browser UI + local vision overlay
 │   │   └── bin/station/          # NormaCore Station (Rust)
 │   ├── agents/
-│   │   └── voice_assistant/      # Whisper + GPT-4o voice agent
+│   │   └── voice_assistant/      # Direct Codex/OpenAI API agent (n8n is recommended for demos)
 │   └── ai/smolvla_py/            # SmolVLA policy training & inference
 ├── hardware/
 │   ├── elrobot/                  # 7+1 DoF arm (3D-printable)
@@ -232,7 +278,7 @@ This hackathon fork builds on the full NormaCore toolkit:
 | MCP tools fail | Station must be running first; reload MCP in Cursor |
 | `Missing generated protobufs` | Run `make protobuf` from repo root |
 | Arm won't move | Call `enable_arm_torque` before motion commands |
-| Voice assistant errors | Set `OPENAI_API_KEY` in `software/agents/voice_assistant/.env` |
+| Voice assistant errors | n8n: check workflow credentials and MCP/HTTP node URL; direct agent: set `OPENAI_API_KEY` in `software/agents/voice_assistant/.env` |
 | Vision shows pixels not mm | Calibrate with AprilTags or camera intrinsics/extrinsics |
 
 See also: [MCP setup guide](software/station/mcp/README.md) · [Vision guide](software/station/vision/README.md)

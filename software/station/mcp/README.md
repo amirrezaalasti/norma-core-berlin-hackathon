@@ -201,9 +201,10 @@ Do **not** guess single-joint moves for directions — use `move_direction` inst
 
 The workspace is a **5×3 grid** (configurable via `NORMA_BOARD_GRID_COLS` / `NORMA_BOARD_GRID_ROWS`). Use square tools for chess-like pick/place:
 
-1. **`go_to_square`** or **`go_to_square_N`** — move to square N and grasp (partial gripper close)
-2. **`place_at_square`** or **`place_at_square_N`** — place held object at square N
-3. **`list_square_poses`** / **`get_square_pose`** — inspect per-square joint targets
+1. **`transfer_object`** — pick at `from_square` and place at `to_square` in one call (preferred for voice: *"move from 9 to 15"*)
+2. **`go_to_square`** or **`go_to_square_N`** — move to square N and grasp (partial gripper close)
+3. **`place_at_square`** or **`place_at_square_N`** — place held object at square N (only after a pick)
+4. **`list_square_poses`** / **`get_square_pose`** — inspect per-square joint targets
 
 Calibrate the board in the station viewer first; joint targets are stored in `.norma/pick_calibration.json`.
 
@@ -230,6 +231,89 @@ Calibrate the board in the station viewer first; joint targets are stored in `.n
 | ElRobot | motors 1–7 | motor 8 |
 
 Positions are **normalized 0.0–1.0** within each motor's calibrated range, not Cartesian XYZ.
+
+---
+
+## UI development (Lovable + Station viewer)
+
+**Use [Lovable](https://lovable.dev) for operator UI.** We intentionally prototyped the dashboard there rather than extending the Rust-embedded Station viewer for every demo screen. Station viewer changes in this repo cover calibration and vision; Lovable covers tap-to-move and status UX.
+
+We used two UI tracks during the hackathon: **in-repo Station viewer** changes for calibration and vision, and **Lovable** for rapid prototyping of a future operator-facing dashboard.
+
+### Station viewer (shipped in this repo)
+
+The NormaCore Station web UI at **http://localhost:8889** (`software/station/clients/station-viewer/`) was extended for board pick/place workflows:
+
+| Feature | Location | Purpose |
+|---------|----------|---------|
+| **Local contrast vision** | Camera HUD → scan icon | Detect dark blocks on the board in-browser; no cloud API required |
+| **Manual workspace calibration** | Camera view click workflow | Set 4 board corners (TL/TR/BR/BL) + gripper tip; saved to `.norma/manual_workspace.json` |
+| **5×3 board grid overlay** | `workspace-grid.ts` + vision overlay | Draws grid lines and square IDs (1–15) on the live camera feed |
+| **Square-aware detections** | `enrichDetectionWithSquare` | Labels each detection with `square_id` and offset from cell center |
+| **Roboflow path** | Vision API + env config | Optional cloud detection when `ROBOFLOW_API_KEY` is set |
+
+Rebuild the embedded viewer after UI changes:
+
+```bash
+cd software/station/bin/station && make client
+```
+
+Details: [`software/station/vision/README.md`](../vision/README.md)
+
+### Lovable prototypes (future operator UI)
+
+We used **Lovable** to iterate quickly on a separate **operator dashboard** concept — a simpler surface than the full Station viewer, aimed at demos and day-to-day board control. These screens were designed against the same mental model as the MCP tools (`go_home`, `go_to_square_N`, `place_at_square_N`, `transfer_object`).
+
+**Prototyped flows:**
+
+- **Board control panel** — visual 5×3 grid; tap a square to pick or place; highlight current arm target
+- **Object transfer** — “from square → to square” picker wired to the `transfer_object` sequence
+- **Live status strip** — connection state, gripper open/closed, last motion result
+- **Camera + grid preview** — side-by-side arm status and overlaid workspace (mirrors Station viewer grid)
+- **Calibration wizard** — guided corner + gripper-tip setup for non-engineers
+- **Voice assistant panel** — transcript, last MCP tool call, and quick gesture buttons (`say_hi`, `acknowledge`)
+
+**Not yet integrated:** the Lovable app is a design prototype; production wiring would call the Station TCP API (port 8888) or MCP over HTTP/WebSocket. Until then, use **n8n voice**, Cursor MCP, or the Station viewer for real motion.
+
+---
+
+## Voice agent (n8n + Codex API)
+
+Voice control follows the same MCP tools as Cursor. **Run the agent in n8n for demos**; use the in-repo Python script when you need direct Codex/OpenAI API access.
+
+### n8n workflow (recommended)
+
+Host the voice agent in **[n8n](https://n8n.io)** — this is what we used for live hackathon demos:
+
+| Step | n8n node (typical) | Output |
+|------|-------------------|--------|
+| 1 | Trigger (webhook, mic, or manual) | Raw audio or text |
+| 2 | OpenAI Whisper / speech-to-text | Transcript |
+| 3 | OpenAI / Codex chat with tools | Tool call JSON (`go_home`, `transfer_object`, …) |
+| 4 | HTTP Request or MCP node | Execute against `norma-station` |
+| 5 | OpenAI TTS (optional) | Spoken reply |
+
+**Why n8n:** prompt and tool routing live in one visual workflow; non-developers can adjust wake-word behavior, add guards (*"never place without pick"*), and log every command without redeploying code.
+
+Requirements: Station running with `--tcp`, MCP server reachable from n8n (stdio wrapper, HTTP bridge, or subprocess `uv run --project software/station/mcp python -m norma_station_mcp`).
+
+### Direct Codex / OpenAI API (alternative)
+
+`software/agents/voice_assistant/agent.py` implements the same loop locally:
+
+```
+Microphone → Whisper (OpenAI API) → Codex/GPT tool calls → MCP stdio → norma-station-mcp → Station :8888
+```
+
+```bash
+cd software/agents/voice_assistant
+cp .env.example .env   # OPENAI_API_KEY
+uv run agent.py
+```
+
+Use this path for development, CI, or when n8n is not available. Both approaches call the **same MCP tool surface** documented in section 5.
+
+Details: [`software/agents/voice_assistant/README.md`](../../agents/voice_assistant/README.md)
 
 ---
 
