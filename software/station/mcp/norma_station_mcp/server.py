@@ -40,7 +40,8 @@ mcp = FastMCP(
         "- enable_arm_torque / disable_arm_torque: power all motors\n"
         "- detect_objects / detect_workspace_objects: optional vision (not used for pick)\n"
         "- save_home_pose: save home pose\n"
-        "- pick_nearest_object: alias for pick_object\n\n"
+        "- pick_nearest_object: alias for pick_object\n"
+        "- say_hi / dance / gripper_wave: fun gesture moves (fast gripper wave)\n\n"
         "Joint ids match motor ids (SO-101: joints 1-5, gripper 6; ElRobot: joints 1-7, gripper 8).\n"
         "Positions are normalized within each motor's calibrated range, not Cartesian XYZ.\n"
         "Low-level advanced_* tools exist for debugging."
@@ -524,6 +525,79 @@ async def pick_nearest_object(
         return_home=return_home,
     )
     return _json(payload)
+
+
+# ── Fun gestures ─────────────────────────────────────────────────────────────
+
+
+@mcp.tool
+async def gripper_wave(
+    cycles: int = 5,
+    interval_s: float = 0.06,
+    end_open: bool = True,
+    bus_serial: str = "auto",
+) -> str:
+    """Rapidly open and close the gripper like an energetic wave (default 5 fast flaps)."""
+    from .fun_moves import gripper_wave as _gripper_wave
+
+    session = get_session()
+    return _json(
+        await _gripper_wave(
+            session,
+            cycles=cycles,
+            interval_s=interval_s,
+            end_open=end_open,
+            bus_serial=bus_serial,
+        )
+    )
+
+
+@mcp.tool
+async def say_hi(
+    waves: int = 6,
+    wiggle: bool = True,
+    wiggle_rounds: int = 2,
+    return_home: bool = True,
+    bus_serial: str = "auto",
+) -> str:
+    """Energetic hello: quick arm wiggle back-and-forth plus rapid gripper wave."""
+    from .fun_moves import say_hi as _say_hi
+
+    session = get_session()
+    return _json(
+        await _say_hi(
+            session,
+            waves=waves,
+            wiggle=wiggle,
+            wiggle_rounds=wiggle_rounds,
+            return_home=return_home,
+            bus_serial=bus_serial,
+        )
+    )
+
+
+@mcp.tool
+async def dance(
+    beats: int = 4,
+    flap_each_beat: bool = True,
+    flaps_per_beat: int = 3,
+    return_home: bool = True,
+    bus_serial: str = "auto",
+) -> str:
+    """Energetic dance: big arm sways with rapid gripper flaps on every beat."""
+    from .fun_moves import dance as _dance
+
+    session = get_session()
+    return _json(
+        await _dance(
+            session,
+            beats=beats,
+            flap_each_beat=flap_each_beat,
+            flaps_per_beat=flaps_per_beat,
+            return_home=return_home,
+            bus_serial=bus_serial,
+        )
+    )
 
 
 # ── Advanced / low-level ─────────────────────────────────────────────────────
