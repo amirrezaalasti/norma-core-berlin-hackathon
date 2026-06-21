@@ -7,14 +7,18 @@ from .pick_control import (
     MOTION_TIMEOUT_S,
     _home_joint_dict,
     _prepare_session,
+    fully_close_gripper,
+    fully_open_gripper,
     go_home,
     load_home_pose,
 )
 
 # Snappy timing — fun moves trade precision for energy.
 GRIPPER_FLAP_INTERVAL_S = 0.06
-HI_WIGGLE_DWELL_S = 0.05
+SAY_HI_CYCLES = 2
+SAY_HI_BETWEEN_CYCLES_S = 0.08
 DANCE_POSE_DWELL_S = 0.1
+ACK_QUICK_PAUSE_S = 0.1
 FUN_POSE_TOLERANCE = 0.025
 FUN_STABLE_READS = 2
 
@@ -95,10 +99,6 @@ async def gripper_wave(
     }
 
 
-_HI_WIGGLE_POSES = (
-    {1: -0.08, 2: 0.05, 5: -0.12, 6: 0.08, 7: 0.04},
-    {1: 0.08, 2: 0.05, 5: 0.12, 6: -0.08, 7: -0.04},
-)
 
 _DANCE_POSES = (
     {1: -0.12, 2: 0.10, 3: -0.06, 5: -0.14, 6: 0.12},
@@ -107,69 +107,72 @@ _DANCE_POSES = (
     {2: 0.08, 3: -0.10, 4: -0.06, 6: -0.12, 7: -0.06},
 )
 
+# Small head nudge from the current pose — one quick move out and back.
+_ACK_NUDGE = {2: 0.05, 5: -0.05, 6: 0.06}
+
+
+async def _current_joints(session: Any, bus_serial: str = "auto") -> dict[int, float]:
+    arm_state = session.get_arm_state(bus_serial)
+    return {
+        int(joint["motor_id"]): float(joint["present_position_normalized"])
+        for joint in arm_state.get("joints") or []
+    }
+
+
+async def acknowledge(
+    session: Any,
+    *,
+    bus_serial: str = "auto",
+) -> dict[str, Any]:
+    """Quick head nudge out and back from the current pose — 'I heard you'."""
+    await _prepare_session(session, bus_serial)
+    start = await _current_joints(session, bus_serial)
+    nudge = _offset_joints(start, _ACK_NUDGE)
+
+    await session.move_arm_pose(nudge, bus_serial)
+    await asyncio.sleep(ACK_QUICK_PAUSE_S)
+    await session.move_arm_pose(start, bus_serial)
+    await asyncio.sleep(ACK_QUICK_PAUSE_S * 0.5)
+
+    return {
+        "action": "acknowledge",
+        "start_pose": {str(k): round(v, 4) for k, v in start.items()},
+        "nudge_pose": {str(k): round(v, 4) for k, v in nudge.items()},
+        "note": "Single quick nudge out and back; does not wait for full settle.",
+    }
+
 
 async def say_hi(
     session: Any,
     *,
-    waves: int = 6,
-    wiggle: bool = True,
-    wiggle_rounds: int = 2,
-    return_home: bool = True,
+    cycles: int = SAY_HI_CYCLES,
+    end_open: bool = True,
     bus_serial: str = "auto",
 ) -> dict[str, Any]:
-    """Say hi: quick energetic wiggle plus fast gripper wave."""
+    """Say hi: fully open and close the gripper twice, waiting for each move to finish."""
+    if cycles < 1:
+        raise ValueError("cycles must be at least 1")
+
     await _prepare_session(session, bus_serial)
+    steps: list[dict[str, Any]] = []
 
-    if load_home_pose() is not None:
-        await go_home(session, bus_serial=bus_serial, open_gripper=True, wait=True)
-    else:
-        await session.open_gripper(bus_serial)
+    for cycle in range(cycles):
+        steps.append(await fully_open_gripper(session, bus_serial))
+        steps.append(await fully_close_gripper(session, bus_serial))
+        if cycle + 1 < cycles:
+            await asyncio.sleep(SAY_HI_BETWEEN_CYCLES_S)
 
-    base = await _base_joints(session, bus_serial)
-    wiggles: list[dict[str, Any]] = []
+    if end_open:
+        steps.append(await fully_open_gripper(session, bus_serial))
 
-    if wiggle and len(base) >= 5:
-        for _ in range(max(1, wiggle_rounds)):
-            for deltas in _HI_WIGGLE_POSES:
-                pose = _offset_joints(base, deltas)
-                wiggles.append(
-                    await _move_and_wait(
-                        session,
-                        pose,
-                        bus_serial=bus_serial,
-                        dwell_s=HI_WIGGLE_DWELL_S,
-                    )
-                )
-        wiggles.append(
-            await _move_and_wait(session, base, bus_serial=bus_serial, dwell_s=HI_WIGGLE_DWELL_S)
-        )
-
-    wave = await gripper_wave(
-        session,
-        cycles=waves,
-        interval_s=GRIPPER_FLAP_INTERVAL_S * 0.85,
-        end_open=True,
-        bus_serial=bus_serial,
-    )
-
-    result: dict[str, Any] = {
+    return {
         "action": "say_hi",
-        "waves": waves,
-        "wiggle": wiggle,
-        "wiggle_rounds": wiggle_rounds,
-        "gripper_wave": wave,
-        "wiggle_moves": wiggles,
+        "cycles": cycles,
+        "end_open": end_open,
+        "gripper_range": "full (0.0 closed, 1.0 open)",
+        "steps": steps,
+        "note": "Waits for gripper to fully open/close before each step.",
     }
-
-    if return_home and load_home_pose() is not None:
-        result["returned_home"] = await go_home(
-            session,
-            bus_serial=bus_serial,
-            open_gripper=True,
-            wait=True,
-        )
-
-    return result
 
 
 async def dance(

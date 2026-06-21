@@ -99,6 +99,7 @@ STABLE_READS = 5
 MOTION_TIMEOUT_S = 45.0
 PLACE_DWELL_S = 0.5
 GRIPPER_OPEN_TOLERANCE = 0.85
+GRIPPER_CLOSED_TOLERANCE = 0.15
 GRIPPER_MOTION_TIMEOUT_S = 8.0
 # Partial grasp for picks: 0.0 = fully closed, 1.0 = fully open. Override with NORMA_GRIPPER_PICK_POSITION.
 DEFAULT_GRIPPER_PICK_POSITION = 0.42
@@ -159,25 +160,30 @@ async def _ensure_gripper_open_before_close(session: Any, bus_serial: str = "aut
 async def _wait_for_gripper(
     session: Any,
     *,
-    target_min: float,
+    target_min: float | None = None,
+    target_max: float | None = None,
     bus_serial: str = "auto",
     timeout_s: float = GRIPPER_MOTION_TIMEOUT_S,
     poll_s: float = 0.1,
 ) -> float:
-    """Block until gripper present position reaches target_min (normalized 0-1)."""
+    """Block until gripper reaches open (target_min) or closed (target_max)."""
+    if (target_min is None) == (target_max is None):
+        raise ValueError("Specify exactly one of target_min or target_max")
+
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         await session.wait_for_inference(timeout_s=min(2.0, max(0.1, deadline - time.monotonic())))
         arm_state = session.get_arm_state(bus_serial)
         gripper = arm_state.get("gripper") or {}
         present = float(gripper.get("present_position_normalized") or 0.0)
-        if present >= target_min:
+        if target_min is not None and present >= target_min:
+            return present
+        if target_max is not None and present <= target_max:
             return present
         await asyncio.sleep(poll_s)
-    raise RuntimeError(
-        f"Gripper did not reach {target_min} within {timeout_s}s "
-        "(object may still be held)."
-    )
+
+    label = f">= {target_min}" if target_min is not None else f"<= {target_max}"
+    raise RuntimeError(f"Gripper did not reach {label} within {timeout_s}s")
 
 
 async def open_gripper_for_place(session: Any, bus_serial: str = "auto") -> dict[str, Any]:
@@ -190,6 +196,34 @@ async def open_gripper_for_place(session: Any, bus_serial: str = "auto") -> dict
         bus_serial=bus_serial,
     )
     result["present_position_normalized"] = present
+    return result
+
+
+async def fully_open_gripper(session: Any, bus_serial: str = "auto") -> dict[str, Any]:
+    """Fully open the gripper and wait until it reaches the open position."""
+    result = await session.open_gripper(bus_serial)
+    present = await _wait_for_gripper(
+        session,
+        target_min=GRIPPER_OPEN_TOLERANCE,
+        bus_serial=bus_serial,
+        poll_s=0.05,
+    )
+    result["present_position_normalized"] = present
+    result["gripper_state"] = "open"
+    return result
+
+
+async def fully_close_gripper(session: Any, bus_serial: str = "auto") -> dict[str, Any]:
+    """Fully close the gripper and wait until it reaches the closed position."""
+    result = await session.close_gripper(bus_serial)
+    present = await _wait_for_gripper(
+        session,
+        target_max=GRIPPER_CLOSED_TOLERANCE,
+        bus_serial=bus_serial,
+        poll_s=0.05,
+    )
+    result["present_position_normalized"] = present
+    result["gripper_state"] = "closed"
     return result
 
 

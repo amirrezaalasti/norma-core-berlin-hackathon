@@ -41,7 +41,8 @@ mcp = FastMCP(
         "- detect_objects / detect_workspace_objects: optional vision (not used for pick)\n"
         "- save_home_pose: save home pose\n"
         "- pick_nearest_object: alias for pick_object\n"
-        "- say_hi / dance / gripper_wave: fun gesture moves (fast gripper wave)\n\n"
+        "- say_hi: fully open/close gripper 2 times fast (gripper only)\n"
+        "- acknowledge: quick head nod from current pose when the robot is called\n\n"
         "Joint ids match motor ids (SO-101: joints 1-5, gripper 6; ElRobot: joints 1-7, gripper 8).\n"
         "Positions are normalized within each motor's calibrated range, not Cartesian XYZ.\n"
         "Low-level advanced_* tools exist for debugging."
@@ -554,23 +555,19 @@ async def gripper_wave(
 
 @mcp.tool
 async def say_hi(
-    waves: int = 6,
-    wiggle: bool = True,
-    wiggle_rounds: int = 2,
-    return_home: bool = True,
+    cycles: int = 2,
+    end_open: bool = True,
     bus_serial: str = "auto",
 ) -> str:
-    """Energetic hello: quick arm wiggle back-and-forth plus rapid gripper wave."""
+    """Say hi: fully open and close the gripper twice, waiting for each move to finish."""
     from .fun_moves import say_hi as _say_hi
 
     session = get_session()
     return _json(
         await _say_hi(
             session,
-            waves=waves,
-            wiggle=wiggle,
-            wiggle_rounds=wiggle_rounds,
-            return_home=return_home,
+            cycles=cycles,
+            end_open=end_open,
             bus_serial=bus_serial,
         )
     )
@@ -598,6 +595,18 @@ async def dance(
             bus_serial=bus_serial,
         )
     )
+
+
+@mcp.tool
+async def acknowledge(bus_serial: str = "auto") -> str:
+    """Show the robot understood: one quick head nudge out and back from the current pose.
+
+    Use when the user calls the robot (e.g. 'hey joe') or checks if it is listening.
+    """
+    from .fun_moves import acknowledge as _acknowledge
+
+    session = get_session()
+    return _json(await _acknowledge(session, bus_serial=bus_serial))
 
 
 # ── Advanced / low-level ─────────────────────────────────────────────────────

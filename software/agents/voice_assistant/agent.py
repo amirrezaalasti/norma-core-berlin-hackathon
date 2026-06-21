@@ -62,6 +62,9 @@ async def run_agent():
                         "content": (
                             "You are a helpful voice assistant controlling an ST3215 robot arm via MCP tools. "
                             "Execute the user's voice commands efficiently. Use tools when needed. "
+                            "When the user says hi, hello, or wave, call say_hi (gripper fully open/close twice). "
+                            "When the user only calls the robot or asks if you heard them, call acknowledge "
+                            "to nod the head back and forth from the current pose. "
                             "For directional motion (up, down, left, right, go home), prefer move_direction and "
                             "go_home instead of guessing individual joint values. "
                             "Use amount=2.0 in move_direction when the user asks for a bigger or more visible move. "
@@ -148,9 +151,19 @@ async def run_agent():
                                         is_recording = False
                                 
                                 if not full_text:
-                                    # User just said 'hey joe'. Wait for their command phrase.
+                                    # User just said 'hey joe'. Nod to show we're listening.
                                     is_recording = True
                                     print("Speak your command...")
+                                    try:
+                                        print("-> Executing: acknowledge({})")
+                                        ack = await session.call_tool("acknowledge", arguments={})
+                                        ack_text = "\n".join(
+                                            [c.text for c in ack.content if hasattr(c, "text")]
+                                        )
+                                        if ack_text:
+                                            print(f"<- Acknowledged ({len(ack_text)} bytes)")
+                                    except Exception as e:
+                                        print(f"Acknowledge gesture failed: {e}")
                                     continue
                                     
                             elif is_recording:
