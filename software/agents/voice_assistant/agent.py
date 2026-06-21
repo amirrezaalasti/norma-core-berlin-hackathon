@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 from typing import List, Dict, Any
 
 from openai import AsyncOpenAI
@@ -93,7 +94,7 @@ async def run_agent():
                 current_phrase = []
                 is_recording = False
                 
-                print("Listening for 'command start'...")
+                print("Listening for 'hey joe'...")
                 
                 while True:
                     try:
@@ -110,7 +111,7 @@ async def run_agent():
                                 transcript_response = await openai_client.audio.transcriptions.create(
                                     model="whisper-1",
                                     file=f,
-                                    prompt="command start. pick the black box. command end.",
+                                    prompt="Hey joe. pick the black box. command end.",
                                     temperature=0.0
                                 )
                             chunk_text = transcript_response.text.strip()
@@ -124,28 +125,31 @@ async def run_agent():
                                 
                             chunk_lower = chunk_text.lower()
                             
-                            if "command start" in chunk_lower or "start command" in chunk_lower:
+                            start_match = re.search(r'hey\s*[,.]*\s*joe', chunk_lower)
+                            if start_match:
                                 is_recording = True
                                 current_phrase = []
                                 print("\n\033[92m[STARTED RECORDING COMMAND]\033[0m Speak your command...")
                                 
-                                # Extract anything said AFTER 'command start'
-                                start_idx = chunk_lower.find("command start")
-                                if start_idx == -1: start_idx = chunk_lower.find("start command")
+                                # Extract anything said AFTER 'hey joe'
+                                start_idx = start_match.end()
                                 
-                                if start_idx != -1 and len(chunk_text) > start_idx + 13:
-                                    after_text = chunk_text[start_idx+13:].strip()
+                                if len(chunk_text) > start_idx:
+                                    after_text = chunk_text[start_idx:].strip()
+                                    # Strip leading punctuation that might be left over
+                                    after_text = re.sub(r'^[.,!?\s]+', '', after_text)
                                     if after_text:
                                         current_phrase.append(after_text)
                                         print(f"\r\033[KUser: {' '.join(current_phrase)}", end="", flush=True)
                                 continue
                                 
-                            if ("command end" in chunk_lower or "end command" in chunk_lower) and is_recording:
+                            # Check for various natural ways to end the command
+                            end_match = re.search(r'(?:command|joe)\s*[,.]*\s*(?:end|stop)|(?:end|stop)\s*[,.]*\s*(?:command|joe)', chunk_lower)
+                            if end_match and is_recording:
                                 is_recording = False
                                 
                                 # Extract anything said BEFORE 'command end'
-                                end_idx = chunk_lower.find("command end")
-                                if end_idx == -1: end_idx = chunk_lower.find("end command")
+                                end_idx = end_match.start()
                                 
                                 if end_idx > 0:
                                     before_text = chunk_text[:end_idx].strip()
@@ -158,7 +162,7 @@ async def run_agent():
                                 current_phrase = []
                                 
                                 if not full_text.strip():
-                                    print("Empty command. Listening for 'command start'...")
+                                    print("Empty command. Listening for 'hey joe'...")
                                     continue
                                 
                                 messages.append({"role": "user", "content": full_text})
@@ -209,7 +213,7 @@ async def run_agent():
                                             })
                                     else:
                                         # GPT didn't call any more tools, we're done processing this voice command
-                                        print("\nListening for 'command start'...")
+                                        print("\nListening for 'hey joe'...")
                                         break
                                         
                             elif is_recording:
