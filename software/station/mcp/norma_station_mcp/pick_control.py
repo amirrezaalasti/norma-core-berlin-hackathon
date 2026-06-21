@@ -82,6 +82,237 @@ def save_home_pose(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+STATIC_PICK_JOINTS: dict[int, float] = {
+    1: 0.5533,
+    2: 0.8377,
+    3: 0.5661,
+    4: 0.4003,
+    5: 0.4669,
+    6: 0.8688,
+    7: 0.2392,
+}
+
+POSE_TOLERANCE = 0.015
+HOME_TOLERANCE = 0.02
+STABLE_READS = 5
+MOTION_TIMEOUT_S = 45.0
+
+
+def load_fixed_pick_joints() -> dict[int, float]:
+    """Return the static pick joint pose (always the same, not vision-derived)."""
+    return dict(STATIC_PICK_JOINTS)
+
+
+def _require_home_pose() -> dict[str, Any]:
+    home = load_home_pose()
+    if home is None:
+        raise RuntimeError(
+            "No home pose saved. Move the arm to the initialized pose and call save_home_pose first."
+        )
+    return home
+
+
+def _home_joint_dict(home: dict[str, Any]) -> dict[int, float]:
+    return {int(k): float(v) for k, v in home["joint_positions"].items()}
+
+
+async def _prepare_session(session: Any, bus_serial: str = "auto") -> None:
+    await session.ensure_connected()
+    await session.wait_for_inference()
+    try:
+        arm_state = session.get_arm_state(bus_serial)
+        joints = arm_state.get("joints") or []
+        gripper = arm_state.get("gripper") or {}
+        torque_on = all(j.get("torque_enabled") for j in joints) and gripper.get(
+            "torque_enabled", True
+        )
+        if not torque_on:
+            await session.enable_arm_torque(bus_serial)
+    except Exception:
+        pass
+
+
+async def _ensure_gripper_open_before_close(session: Any, bus_serial: str = "auto") -> None:
+    arm_state = session.get_arm_state(bus_serial)
+    gripper = arm_state.get("gripper") or {}
+    if float(gripper.get("present_position_normalized") or 0.0) < 0.85:
+        await session.open_gripper(bus_serial)
+        await asyncio.sleep(0.5)
+
+
+async def go_home(
+    session: Any,
+    bus_serial: str = "auto",
+    *,
+    open_gripper: bool = True,
+    wait: bool = True,
+) -> dict[str, Any]:
+    """Move the arm to the saved home pose."""
+    home = _require_home_pose()
+    home_joints = _home_joint_dict(home)
+
+    await _prepare_session(session, bus_serial)
+    if open_gripper:
+        await session.open_gripper(bus_serial)
+    await session.move_arm_pose(home_joints, bus_serial)
+
+    result: dict[str, Any] = {
+        "action": "go_home",
+        "joint_targets": home_joints,
+        "gripper_opened": open_gripper,
+    }
+    if wait:
+        settled = await session.wait_for_arm_pose(
+            home_joints,
+            tolerance=HOME_TOLERANCE,
+            stable_reads=STABLE_READS,
+            timeout_s=MOTION_TIMEOUT_S,
+            bus_serial=bus_serial,
+        )
+        result["motion_settled"] = settled
+        if open_gripper:
+            gripper_home = home.get("gripper_position")
+            if gripper_home is not None:
+                await session.set_gripper(float(gripper_home), bus_serial)
+    return result
+
+
+async def move_to_pick_pose(
+    session: Any,
+    bus_serial: str = "auto",
+    *,
+    wait: bool = True,
+) -> dict[str, Any]:
+    """Move the arm to the static pick/placement pose (gripper unchanged)."""
+    pick_joints = load_fixed_pick_joints()
+
+    await _prepare_session(session, bus_serial)
+    await session.move_arm_pose(pick_joints, bus_serial)
+
+    result: dict[str, Any] = {
+        "action": "move_to_pick_pose",
+        "joint_targets": pick_joints,
+    }
+    if wait:
+        result["motion_settled"] = await session.wait_for_arm_pose(
+            pick_joints,
+            tolerance=POSE_TOLERANCE,
+            stable_reads=STABLE_READS,
+            timeout_s=MOTION_TIMEOUT_S,
+            bus_serial=bus_serial,
+        )
+    return result
+
+
+async def pick_object(
+    session: Any,
+    bus_serial: str = "auto",
+    *,
+    lift_after: bool = False,
+    start_from_home: bool = True,
+) -> dict[str, Any]:
+    """Pick using the static pose: open gripper, move down, wait, close.
+
+    Gripper stays closed after pick unless lift_after is True (moves to home holding object).
+    """
+    home = _require_home_pose()
+    home_joints = _home_joint_dict(home)
+    pick_joints = load_fixed_pick_joints()
+
+    await _prepare_session(session, bus_serial)
+
+    if start_from_home:
+        await session.open_gripper(bus_serial)
+        await session.move_arm_pose(home_joints, bus_serial)
+        await session.wait_for_arm_pose(
+            home_joints,
+            tolerance=HOME_TOLERANCE,
+            stable_reads=3,
+            timeout_s=MOTION_TIMEOUT_S,
+            bus_serial=bus_serial,
+        )
+
+    await session.open_gripper(bus_serial)
+    await asyncio.sleep(0.3)
+    await session.move_arm_pose(pick_joints, bus_serial)
+    settled = await session.wait_for_arm_pose(
+        pick_joints,
+        tolerance=POSE_TOLERANCE,
+        stable_reads=STABLE_READS,
+        timeout_s=MOTION_TIMEOUT_S,
+        bus_serial=bus_serial,
+    )
+    await _ensure_gripper_open_before_close(session, bus_serial)
+    await session.close_gripper(bus_serial)
+    await asyncio.sleep(1.0)
+
+    result: dict[str, Any] = {
+        "action": "pick_object",
+        "planning_mode": "static",
+        "joint_targets": pick_joints,
+        "motion_settled": settled,
+        "gripper_closed": True,
+    }
+
+    if lift_after:
+        result["lift"] = await lift_object(session, bus_serial=bus_serial)
+    return result
+
+
+async def lift_object(session: Any, bus_serial: str = "auto") -> dict[str, Any]:
+    """Lift a held object by moving to home without opening the gripper."""
+    home = _require_home_pose()
+    home_joints = _home_joint_dict(home)
+
+    await _prepare_session(session, bus_serial)
+    await session.move_arm_pose(home_joints, bus_serial)
+    settled = await session.wait_for_arm_pose(
+        home_joints,
+        tolerance=HOME_TOLERANCE,
+        stable_reads=STABLE_READS,
+        timeout_s=MOTION_TIMEOUT_S,
+        bus_serial=bus_serial,
+    )
+
+    arm_state = session.get_arm_state(bus_serial)
+    gripper = (arm_state.get("gripper") or {}).get("present_position_normalized")
+    return {
+        "action": "lift_object",
+        "joint_targets": home_joints,
+        "motion_settled": settled,
+        "gripper_position": gripper,
+        "note": "Gripper left closed to retain the object.",
+    }
+
+
+async def place_object(session: Any, bus_serial: str = "auto") -> dict[str, Any]:
+    """Place a held object: move to pick pose, open gripper, return home."""
+    home = _require_home_pose()
+    pick_joints = load_fixed_pick_joints()
+
+    await _prepare_session(session, bus_serial)
+    await session.move_arm_pose(pick_joints, bus_serial)
+    settled = await session.wait_for_arm_pose(
+        pick_joints,
+        tolerance=POSE_TOLERANCE,
+        stable_reads=STABLE_READS,
+        timeout_s=MOTION_TIMEOUT_S,
+        bus_serial=bus_serial,
+    )
+
+    await session.open_gripper(bus_serial)
+    await asyncio.sleep(1.5)
+
+    home_result = await go_home(session, bus_serial=bus_serial, open_gripper=True, wait=True)
+    return {
+        "action": "place_object",
+        "joint_targets": pick_joints,
+        "motion_settled": settled,
+        "gripper_opened": True,
+        "returned_home": home_result,
+    }
+
+
 def home_pose_from_arm_state(arm_state: dict[str, Any]) -> dict[str, Any]:
     joint_positions: dict[int, float] = {}
     for joint in arm_state.get("joints", []):
@@ -396,88 +627,17 @@ async def pick_nearest_object(
     session: Any,
     bus_serial: str = "auto",
     settle_s: float = 1.5,
-    return_home: bool = True,
+    return_home: bool = False,
 ) -> dict[str, Any]:
-    from .vision_bridge import detect_workspace_objects
+    """Pick at the static pose (alias for pick_object, no vision planning)."""
+    del settle_s  # kept for API compatibility; motion uses wait_for_arm_pose
 
-    home = load_home_pose()
-    if home is None:
-        raise RuntimeError(
-            "No home pose saved. Move the arm to the initialized pose and call save_home_pose first."
-        )
-
-    manual_workspace = _load_manual_workspace_dict()
-    if not _manual_workspace_ready(manual_workspace):
-        raise RuntimeError(
-            "Manual workspace calibration is required. In the station viewer, click "
-            "'Set 4 points' for the board corners, then 'Set gripper tip' while the arm "
-            "is at the home pose."
-        )
-
-    await session.ensure_connected()
-    
-    # Try fetching vision detections for reference / logging, but do not crash or fail if empty
-    try:
-        vision = await detect_workspace_objects(camera_index=0)
-    except Exception:
-        vision = {}
-        
-    workspace = manual_workspace
-    raw_detections = vision.get("detections", [])
-    detections = _apply_manual_workspace_to_detections(raw_detections, manual_workspace)
-    detections = [
-        item
-        for item in detections
-        if item.get("offset_xy") is not None and item.get("distance") is not None
-    ]
-    target_detection = min(detections, key=lambda item: float(item["distance"])) if detections else None
-
-    # Static hardcoded pick pose requested by the user
-    pick_plan = {
-        "class_name": target_detection.get("class_name") if target_detection else "static_pick",
-        "confidence": target_detection.get("confidence") if target_detection else 1.0,
-        "offset_xy": target_detection.get("offset_xy") if target_detection else [0.0, 0.0],
-        "distance": target_detection.get("distance") if target_detection else 0.0,
-        "units": "mm",
-        "planning_mode": "static_hardcoded_user",
-        "joint_targets_from_home": {
-            1: 0.5533,
-            2: 0.8377,
-            3: 0.5661,
-            4: 0.4003,
-            5: 0.4669,
-            6: 0.8688,
-            7: 0.2392
-        },
-        "home_joint_positions": home["joint_positions"],
-        "gripper_pick": 0.4665
-    }
-
-    await session.wait_for_inference()
-    await session.enable_arm_torque(bus_serial)
-    await session.open_gripper(bus_serial)
-    await session.move_arm_pose(pick_plan["joint_targets_from_home"], bus_serial)
-    await asyncio.sleep(settle_s)
-
-    gripper_pick = pick_plan["gripper_pick"]
-    await session.set_gripper(float(gripper_pick), bus_serial)
-    await asyncio.sleep(1.0)
-
-    result: dict[str, Any] = {
-        "picked": target_detection,
-        "pick_plan": pick_plan,
-        "workspace": workspace,
-        "gripper_tip": vision.get("gripper_tip"),
-        "camera_calibration": vision.get("camera_calibration"),
-    }
-
+    result = await pick_object(
+        session,
+        bus_serial=bus_serial,
+        lift_after=return_home,
+        start_from_home=True,
+    )
     if return_home:
-        await asyncio.sleep(0.5)
-        home_joints = {int(k): float(v) for k, v in home["joint_positions"].items()}
-        await session.move_arm_pose(home_joints, bus_serial)
-        gripper_home = home.get("gripper_position")
-        if gripper_home is not None:
-            await session.set_gripper(float(gripper_home), bus_serial)
         result["returned_home"] = True
-
     return result

@@ -10,28 +10,35 @@ from .session import get_session
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("norma-station-mcp")
 
+
+def _json(data: object) -> str:
+    return json.dumps(data, indent=2)
+
+
 mcp = FastMCP(
     name="NormaCore Station",
     instructions=(
         "NormaCore robotics MCP server. Station must run with `--tcp` (port 8888).\n\n"
-        "Prefer high-level tools:\n"
+        "Prefer high-level pick/place tools:\n"
+        "- go_home: move to saved home pose (optionally open gripper)\n"
+        "- pick_object: open gripper, move to static pick pose, close gripper\n"
+        "- lift_object: move to home while holding object (gripper stays closed)\n"
+        "- place_object: move to static pick pose, open gripper, return home\n"
+        "- get_fixed_pick_pose / get_home_pose: read home and static pick poses\n\n"
+        "Pick/placement always uses hardcoded STATIC_PICK_JOINTS — no vision offset planning.\n\n"
+        "Other tools:\n"
         "- get_arm_state: read joints + gripper with roles\n"
         "- move_joint / move_arm_pose: joint-space motion (0.0-1.0 per joint)\n"
         "- open_gripper / close_gripper / set_gripper: gripper control\n"
         "- enable_arm_torque / disable_arm_torque: power all motors\n"
-        "- detect_objects: pretrained YOLOE detection (requires vision extra)\n"
-        "- detect_workspace_objects: Roboflow + contrast + gripper-relative offsets\n"
-        "- save_home_pose / pick_nearest_object: vision-guided pick from home pose\n"
-        "- save_pick_reference / get_pick_calibration: empirical pick tuning from a known good pick\n\n"
+        "- detect_objects / detect_workspace_objects: optional vision (not used for pick)\n"
+        "- save_home_pose: save home pose\n"
+        "- pick_nearest_object: alias for pick_object\n\n"
         "Joint ids match motor ids (SO-101: joints 1-5, gripper 6; ElRobot: joints 1-7, gripper 8).\n"
         "Positions are normalized within each motor's calibrated range, not Cartesian XYZ.\n"
         "Low-level advanced_* tools exist for debugging."
     ),
 )
-
-
-def _json(data: object) -> str:
-    return json.dumps(data, indent=2)
 
 
 # ── Discovery & state ─────────────────────────────────────────────────────────
@@ -179,6 +186,62 @@ async def detect_workspace_objects(
 
 
 @mcp.tool
+async def get_fixed_pick_pose() -> str:
+    """Return the static pick joint pose (hardcoded STATIC_PICK_JOINTS, never vision-derived)."""
+    from .pick_control import STATIC_PICK_JOINTS
+
+    return _json({"planning_mode": "static", "joint_positions": dict(STATIC_PICK_JOINTS)})
+
+
+@mcp.tool
+async def go_home(open_gripper: bool = True, bus_serial: str = "auto") -> str:
+    """Move the arm to the saved home pose.
+
+    Set open_gripper=false when returning home while holding an object (use lift_object instead).
+    """
+    from .pick_control import go_home as _go_home
+
+    session = get_session()
+    return _json(await _go_home(session, bus_serial=bus_serial, open_gripper=open_gripper))
+
+
+@mcp.tool
+async def pick_object(
+    lift_after: bool = False,
+    bus_serial: str = "auto",
+) -> str:
+    """Pick the object at the static pick pose.
+
+    Sequence: home → open gripper → move to pick pose → wait until settled → close gripper.
+    Set lift_after=true to move to home afterward while holding the object.
+    """
+    from .pick_control import pick_object as _pick_object
+
+    session = get_session()
+    return _json(
+        await _pick_object(session, bus_serial=bus_serial, lift_after=lift_after)
+    )
+
+
+@mcp.tool
+async def lift_object(bus_serial: str = "auto") -> str:
+    """Lift a held object by moving to home without opening the gripper."""
+    from .pick_control import lift_object as _lift_object
+
+    session = get_session()
+    return _json(await _lift_object(session, bus_serial=bus_serial))
+
+
+@mcp.tool
+async def place_object(bus_serial: str = "auto") -> str:
+    """Place a held object back at the pick pose, open gripper, then return home."""
+    from .pick_control import place_object as _place_object
+
+    session = get_session()
+    return _json(await _place_object(session, bus_serial=bus_serial))
+
+
+@mcp.tool
 async def save_home_pose(bus_serial: str = "auto") -> str:
     """Save the current arm joint positions as the initialized home pose.
 
@@ -232,14 +295,9 @@ async def save_pick_reference(
     board_y: float,
     bus_serial: str = "auto",
 ) -> str:
-    """Record a successful pick pose and derive joint scales from vision board_xy.
+    """Record a pick pose sample for offline calibration (not used by pick_object).
 
-    Workflow:
-    1. save_home_pose — arm at home, cube visible
-    2. Manually move arm to a good pick pose (or run a tuned pick once)
-    3. save_pick_reference(board_x, board_y) — object's board_xy from the overlay (e.g. 0.72, 0.51)
-
-    Writes .norma/pick_calibration.json used automatically by pick_nearest_object.
+    pick_object / place_object always use hardcoded STATIC_PICK_JOINTS.
     """
     from .pick_control import save_pick_reference as _save
 
@@ -252,21 +310,21 @@ async def save_pick_reference(
 async def pick_nearest_object(
     bus_serial: str = "auto",
     settle_s: float = 1.5,
-    return_home: bool = True,
+    return_home: bool = False,
 ) -> str:
-    """Pick the nearest detected object relative to the calibrated gripper tip.
+    """Pick at the static pick pose (alias for pick_object, no vision planning).
 
-    Workflow:
-    1. In station viewer: Set 4 points (board corners), then Set gripper tip at home pose
-    2. save_home_pose — arm at that same initialized pose
-    3. pick_nearest_object — opens gripper, moves from home by vision offset, closes
-
-    Uses .norma/pick_calibration.json scales when present (from save_pick_reference).
+    When return_home=true, lifts to home after grasping (gripper stays closed).
     """
     from .pick_control import pick_nearest_object as _pick
 
     session = get_session()
-    payload = await _pick(session, bus_serial=bus_serial, settle_s=settle_s, return_home=return_home)
+    payload = await _pick(
+        session,
+        bus_serial=bus_serial,
+        settle_s=settle_s,
+        return_home=return_home,
+    )
     return _json(payload)
 
 

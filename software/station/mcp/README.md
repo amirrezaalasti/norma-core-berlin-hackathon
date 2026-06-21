@@ -170,7 +170,19 @@ If the robot runs on another machine, change `STATION_HOST` to e.g. `"192.168.1.
 
 ## 5. Control the robot from Cursor
 
-Recommended order:
+### Pick / place workflow (recommended)
+
+Use these high-level MCP tools in order:
+
+1. **`get_arm_state`** — read current joint and gripper positions
+2. **`pick_object`** — home → open gripper → move to fixed pick pose → close gripper
+3. **`lift_object`** — move to home while holding the object (gripper stays closed)
+4. **`place_object`** — move to pick pose → open gripper → return home
+5. **`go_home`** — move to saved home pose (set `open_gripper=false` if holding an object)
+
+Poses: home from `.norma/home_pose.json`; pick/placement joints are **static** (hardcoded in `pick_control.py`, not vision-derived).
+
+### Low-level motion
 
 1. **`get_arm_state`** — read current joint and gripper positions (start here).
 2. **`enable_arm_torque`** — power motors so the arm holds position.

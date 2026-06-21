@@ -6,9 +6,7 @@
         "run",
         "--project",
         "software/station/mcp",
-        "python",
-        "-m",
-        "norma_station_mcp"
+        "norma-station-mcp"
       ],
       "cwd": "/Users/amirrezaalasti/Desktop/selfprojects/norma-core-berlin-hackathon",
       "env": {
