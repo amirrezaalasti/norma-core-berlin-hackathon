@@ -58,9 +58,14 @@ async def run_agent():
                 messages = [
                     {
                         "role": "system",
-                        "content": "You are a helpful voice assistant controlling an ST3215 robot arm via MCP tools. "
-                                   "Execute the user's voice commands efficiently. Use tools when needed. "
-                                   "Keep your verbal responses extremely short and concise, since this is a voice conversation."
+                        "content": (
+                            "You are a helpful voice assistant controlling an ST3215 robot arm via MCP tools. "
+                            "Execute the user's voice commands efficiently. Use tools when needed. "
+                            "For directional motion (up, down, left, right, go home), prefer move_direction and "
+                            "go_home instead of guessing individual joint values. "
+                            "Use amount=2.0 in move_direction when the user asks for a bigger or more visible move. "
+                            "Keep your verbal responses extremely short and concise, since this is a voice conversation."
+                        )
                     }
                 ]
 

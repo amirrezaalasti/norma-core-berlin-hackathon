@@ -21,6 +21,7 @@ mcp = FastMCP(
         "NormaCore robotics MCP server. Station must run with `--tcp` (port 8888).\n\n"
         "Prefer high-level pick/place tools:\n"
         "- go_home: move to saved home pose (optionally open gripper)\n"
+        "- move_direction: nudge up/down/left/right using teleop-calibrated joint deltas\n"
         "- pick_object: open gripper, move to static pick pose, close gripper\n"
         "- lift_object: move to home while holding object (gripper stays closed)\n"
         "- place_object: move to static pick pose, open gripper, return home\n"
@@ -28,6 +29,7 @@ mcp = FastMCP(
         "Pick/placement always uses hardcoded STATIC_PICK_JOINTS — no vision offset planning.\n\n"
         "Other tools:\n"
         "- get_arm_state: read joints + gripper with roles\n"
+        "- move_direction: calibrated up/down/left/right nudge (amount=1.0 is one teleop step)\n"
         "- move_joint / move_arm_pose: joint-space motion (0.0-1.0 per joint)\n"
         "- open_gripper / close_gripper / set_gripper: gripper control\n"
         "- enable_arm_torque / disable_arm_torque: power all motors\n"
@@ -123,6 +125,48 @@ async def move_arm_pose(
     """
     session = get_session()
     return _json(await session.move_arm_pose(joint_positions, bus_serial))
+
+
+@mcp.tool
+async def move_direction(
+    direction: str,
+    amount: float = 1.0,
+    bus_serial: str = "auto",
+) -> str:
+    """Nudge the arm up, down, left, or right using teleop-calibrated joint deltas.
+
+    Applies coordinated joint changes from the current pose (not Cartesian mm).
+    amount=1.0 is one teleop button press; use 2.0 for a double nudge.
+    Prefer this over move_joint for voice commands like "go right" or "move up".
+    """
+    from .direction_control import move_direction as _move_direction
+
+    session = get_session()
+    return _json(
+        await _move_direction(
+            session,
+            direction,
+            amount=amount,
+            bus_serial=bus_serial,
+        )
+    )
+
+
+@mcp.tool
+async def get_direction_calibration() -> str:
+    """Return teleop direction nudge calibration (joint deltas per up/down/left/right)."""
+    from .direction_control import DIRECTION_NUDGE_PATH, load_direction_nudge
+
+    payload = load_direction_nudge()
+    if payload is None:
+        return _json(
+            {
+                "saved": False,
+                "path": str(DIRECTION_NUDGE_PATH),
+                "note": "Using built-in ElRobot defaults when file is missing.",
+            }
+        )
+    return _json({"saved": True, **payload})
 
 
 @mcp.tool

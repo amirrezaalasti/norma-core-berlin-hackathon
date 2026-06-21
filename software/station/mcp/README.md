@@ -182,6 +182,17 @@ Use these high-level MCP tools in order:
 
 Poses: home from `.norma/home_pose.json`; pick/placement joints are **static** (hardcoded in `pick_control.py`, not vision-derived).
 
+### Directional nudges (up / down / left / right)
+
+Use **`move_direction`** for commands like “go right” or “move up a bit”:
+
+- **`move_direction`** — applies teleop-calibrated joint deltas from the **current** pose
+- `direction`: `up`, `down`, `left`, or `right`
+- `amount`: `1.0` = one teleop step (default); `2.0` = double nudge
+- Calibration: `.norma/direction_nudge.json` (ElRobot defaults built in)
+
+Do **not** guess single-joint moves for directions — use `move_direction` instead.
+
 ### Low-level motion
 
 1. **`get_arm_state`** — read current joint and gripper positions (start here).

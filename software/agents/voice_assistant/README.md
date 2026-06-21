@@ -31,6 +31,7 @@ When it prints `READY!`, you can start speaking.
 
 Example commands:
 - *"What is the current arm state?"*
+- *"Go to home position"*
+- *"Go right"* / *"Move up"* (uses `move_direction`)
 - *"Open the gripper"*
-- *"Move joint 1 to position 0.5"*
-- *"Close the gripper and move joint 2 to 0.1"*
+- *"Pick up the object"*
