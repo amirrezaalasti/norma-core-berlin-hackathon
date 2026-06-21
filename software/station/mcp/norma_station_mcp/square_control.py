@@ -19,6 +19,7 @@ from .pick_control import (
     _home_joint_dict,
     _prepare_session,
     _require_home_pose,
+    close_gripper_for_pick,
     go_home,
     lift_object,
     load_home_pose,
@@ -183,7 +184,8 @@ def list_square_poses() -> dict[str, Any]:
         "note": (
             "Each square maps to a 5x3 board grid (default). "
             "Recorded samples are used when available; others use IDW over calibration samples. "
-            "Pick always fully closes the gripper; place opens the gripper only after reaching the square."
+            "Pick uses a partial grasp (default 0.42, set NORMA_GRIPPER_PICK_POSITION). "
+            "Place opens the gripper only after reaching the square."
         ),
     }
 
@@ -243,9 +245,8 @@ async def go_to_square(
 
     if pick:
         await _ensure_gripper_open_before_close(session, bus_serial)
-        await session.close_gripper(bus_serial)
-        result["gripper_closed"] = True
-        await asyncio.sleep(1.0)
+        gripper_result = await close_gripper_for_pick(session, bus_serial)
+        result["gripper_grasp"] = gripper_result
 
     if lift_after:
         result["lifted_home"] = await lift_object(session, bus_serial=bus_serial)

@@ -21,13 +21,13 @@ mcp = FastMCP(
         "NormaCore robotics MCP server. Station must run with `--tcp` (port 8888).\n\n"
         "Prefer high-level pick/place tools:\n"
         "- go_home: move to saved home pose (optionally open gripper)\n"
-        "- go_to_square_N (1-15): move to board square N, then fully close gripper to pick\n"
+        "- go_to_square_N (1-15): move to board square N, then grasp with partial gripper close\n"
         "- go_to_square: same as go_to_square_N but pass square_id (1-15)\n"
         "- place_at_square_N (1-15): move to square with gripper closed, open gripper last to place\n"
         "- place_at_square: same as place_at_square_N but pass square_id (1-15)\n"
         "- list_square_poses / get_square_pose: inspect per-square joint targets\n"
         "- move_direction: nudge up/down/left/right using teleop-calibrated joint deltas\n"
-        "- pick_object: open gripper, move to static pick pose, fully close gripper\n"
+        "- pick_object: open gripper, move to static pick pose, partial gripper grasp\n"
         "- lift_object: move to home while holding object (gripper stays closed)\n"
         "- place_object: move to static pick pose with gripper closed, open gripper last, return home\n"
         "- get_fixed_pick_pose / get_home_pose: read home and static pick poses\n\n"
@@ -396,7 +396,7 @@ async def go_to_square(
     return_home: bool = False,
     bus_serial: str = "auto",
 ) -> str:
-    """Move to a board square by id (1–15), then fully close the gripper to pick.
+    """Move to a board square by id (1–15), then grasp with a partial gripper close (default 0.42).
 
     Uses recorded joint coordinates when available (e.g. squares 8, 9, 10, 14, 15);
     other squares are interpolated from calibration samples. Set pick=false to only move.
@@ -444,7 +444,7 @@ def _register_square_tools() -> None:
 
         _handler.__name__ = f"go_to_square_{square_id}"
         _handler.__doc__ = (
-            f"Move to board square {square_id}, fully close gripper to pick. "
+            f"Move to board square {square_id}, partial gripper grasp to pick. "
             f"Voice: 'go to square {square_id}'. Set pick=false to only move. "
             f"Set lift_after=true to lift home while holding."
         )

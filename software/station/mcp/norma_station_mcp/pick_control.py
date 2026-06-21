@@ -100,6 +100,18 @@ MOTION_TIMEOUT_S = 45.0
 PLACE_DWELL_S = 0.5
 GRIPPER_OPEN_TOLERANCE = 0.85
 GRIPPER_MOTION_TIMEOUT_S = 8.0
+# Partial grasp for picks: 0.0 = fully closed, 1.0 = fully open. Override with NORMA_GRIPPER_PICK_POSITION.
+DEFAULT_GRIPPER_PICK_POSITION = 0.42
+
+
+def gripper_pick_position() -> float:
+    raw = os.environ.get("NORMA_GRIPPER_PICK_POSITION")
+    if raw is None:
+        return DEFAULT_GRIPPER_PICK_POSITION
+    value = float(raw)
+    if value < 0.0 or value > 1.0:
+        raise ValueError("NORMA_GRIPPER_PICK_POSITION must be between 0.0 and 1.0")
+    return value
 
 
 def load_fixed_pick_joints() -> dict[int, float]:
@@ -178,6 +190,16 @@ async def open_gripper_for_place(session: Any, bus_serial: str = "auto") -> dict
         bus_serial=bus_serial,
     )
     result["present_position_normalized"] = present
+    return result
+
+
+async def close_gripper_for_pick(session: Any, bus_serial: str = "auto") -> dict[str, Any]:
+    """Grasp an object with a firm but not fully closed gripper."""
+    position = gripper_pick_position()
+    result = await session.set_gripper(position, bus_serial)
+    result["gripper_pick_position"] = position
+    result["gripper_state"] = "pick_grasp"
+    await asyncio.sleep(1.0)
     return result
 
 
@@ -284,15 +306,14 @@ async def pick_object(
         bus_serial=bus_serial,
     )
     await _ensure_gripper_open_before_close(session, bus_serial)
-    await session.close_gripper(bus_serial)
-    await asyncio.sleep(1.0)
+    gripper_result = await close_gripper_for_pick(session, bus_serial)
 
     result: dict[str, Any] = {
         "action": "pick_object",
         "planning_mode": "static",
         "joint_targets": pick_joints,
         "motion_settled": settled,
-        "gripper_closed": True,
+        "gripper_grasp": gripper_result,
     }
 
     if lift_after:
