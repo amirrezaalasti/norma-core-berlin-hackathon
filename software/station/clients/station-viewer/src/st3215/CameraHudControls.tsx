@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Maximize2, Minimize2, SlidersHorizontal } from 'lucide-react';
+import { ArrowLeftRight, Maximize2, Minimize2, ScanSearch, SlidersHorizontal } from 'lucide-react';
 
 type CameraLayoutMode = 'pip' | 'side-by-side' | 'stacked';
 
@@ -6,12 +6,14 @@ interface CameraHudControlsProps {
   cameraLayout: CameraLayoutMode;
   hasMotors: boolean;
   showMotorData: boolean;
+  showDetectionOverlay: boolean;
   isFullscreen: boolean;
   canSwapCameras: boolean;
   onSetPipLayout: () => void;
   onToggleSplitLayout: () => void;
   onSwapCameras: () => void;
   onToggleMotorData: () => void;
+  onToggleDetectionOverlay: () => void;
   onToggleFullscreen: () => void;
 }
 
@@ -19,12 +21,14 @@ export default function CameraHudControls({
   cameraLayout,
   hasMotors,
   showMotorData,
+  showDetectionOverlay,
   isFullscreen,
   canSwapCameras,
   onSetPipLayout,
   onToggleSplitLayout,
   onSwapCameras,
   onToggleMotorData,
+  onToggleDetectionOverlay,
   onToggleFullscreen,
 }: CameraHudControlsProps) {
   return (
@@ -91,6 +95,19 @@ export default function CameraHudControls({
           <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
         </button>
       )}
+      <button
+        type="button"
+        onClick={onToggleDetectionOverlay}
+        className={`flex h-9 w-9 items-center justify-center rounded-md border transition-colors ${
+          showDetectionOverlay
+            ? 'border-accent-data bg-accent-data text-surface-base'
+            : 'border-border-subtle bg-surface-primary text-text-muted hover:text-text-primary'
+        }`}
+        title={showDetectionOverlay ? 'Hide object detection overlay' : 'Show object detection overlay'}
+        aria-label={showDetectionOverlay ? 'Hide object detection overlay' : 'Show object detection overlay'}
+      >
+        <ScanSearch className="h-4 w-4" aria-hidden="true" />
+      </button>
       <button
         type="button"
         onClick={onToggleFullscreen}

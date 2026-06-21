@@ -3,3 +3,14 @@
 __pycache__
 # Local vendored JS package tarballs for offline installs.
 js-vendor/
+.tmp/
+*.zip
+
+# Secrets and local env
+.env
+.env.local
+
+# ML model weights (downloaded locally; not versioned)
+*.pt
+mobileclip_blt.ts
+station_data/*

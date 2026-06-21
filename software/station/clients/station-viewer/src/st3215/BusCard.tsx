@@ -70,6 +70,7 @@ const BusCard: React.FC<BusCardProps> = ({
   const [primaryCameraFit, setPrimaryCameraFit] = useState<CameraFitMode>('contain');
   const [secondaryCameraFit, setSecondaryCameraFit] = useState<CameraFitMode>('contain');
   const [showCameraMotorData, setShowCameraMotorData] = useState(false);
+  const [showDetectionOverlay, setShowDetectionOverlay] = useState(false);
   const [isWebControlled, setIsWebControlled] = useState(false);
   const cameraContentRef = useRef<HTMLDivElement>(null);
   const {
@@ -577,6 +578,7 @@ const BusCard: React.FC<BusCardProps> = ({
               bus={bus}
               busIndex={busIndex}
               showMotorData={showCameraMotorData}
+              showDetectionOverlay={showDetectionOverlay}
               showCalibrateButton={true}
               needsCalibration={needsCalibration}
               isWebControlled={isWebControlled}
@@ -590,6 +592,7 @@ const BusCard: React.FC<BusCardProps> = ({
               cameraLayout={cameraLayout}
               hasMotors={hasMotors}
               showMotorData={showCameraMotorData}
+              showDetectionOverlay={showDetectionOverlay}
               isFullscreen={isCameraFullscreen}
               canSwapCameras={Boolean(primaryVideoSourceId && secondaryVideoSourceId)}
               onSetPipLayout={() => setCameraLayout('pip')}
@@ -598,6 +601,7 @@ const BusCard: React.FC<BusCardProps> = ({
               }
               onSwapCameras={handleSwapVideoSources}
               onToggleMotorData={() => setShowCameraMotorData((prev) => !prev)}
+              onToggleDetectionOverlay={() => setShowDetectionOverlay((prev) => !prev)}
               onToggleFullscreen={toggleCameraFullscreen}
             />
           </>

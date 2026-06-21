@@ -1,0 +1,56 @@
+{
+  "arm_type": "elrobot",
+  "bus_serial": "5B61037157",
+  "reference": "One teleop nudge from saved home pose (2026-06-21)",
+  "directions": {
+    "up": {
+      "joint_deltas": {
+        "1": -0.0019,
+        "2": 0.0032,
+        "3": -0.0234,
+        "4": -0.1626,
+        "5": -0.001,
+        "6": -0.0246,
+        "7": -0.0003
+      },
+      "primary_joints": [4, 6, 3]
+    },
+    "down": {
+      "joint_deltas": {
+        "1": -0.0039,
+        "2": 0.2007,
+        "3": 0.009,
+        "4": 0.09,
+        "5": -0.0629,
+        "6": 0.2879,
+        "7": -0.0006
+      },
+      "primary_joints": [6, 2, 4]
+    },
+    "right": {
+      "joint_deltas": {
+        "1": 0.1759,
+        "2": 0.2835,
+        "3": 0.0013,
+        "4": -0.0595,
+        "5": -0.1006,
+        "6": 0.2912,
+        "7": -0.0008
+      },
+      "primary_joints": [6, 2, 1]
+    },
+    "left": {
+      "joint_deltas": {
+        "1": -0.3769,
+        "2": 0.0169,
+        "3": -0.0017,
+        "4": 0.0135,
+        "5": -0.1006,
+        "6": 0.2903,
+        "7": -0.0003
+      },
+      "primary_joints": [1, 6, 5]
+    }
+  },
+  "note": "joint_deltas are normalized 0.0-1.0 changes per one teleop nudge, measured from home."
+}

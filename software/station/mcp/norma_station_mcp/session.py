@@ -96,6 +96,11 @@ class StationSession:
                 )
             await asyncio.sleep(0.05)
 
+    async def _ensure_ready(self) -> None:
+        """Connect and wait for at least one inference frame before bus/motor lookups."""
+        await self.ensure_connected()
+        await self.wait_for_inference()
+
     def connection_info(self) -> dict[str, Any]:
         return {
             "host": self.host,
@@ -227,6 +232,7 @@ class StationSession:
         bus_serial: str = "auto",
     ) -> dict[str, Any]:
         """Move multiple motors in one sync_write batch."""
+        positions = {int(motor_id): float(position) for motor_id, position in positions.items()}
         await self.ensure_connected()
         await self.wait_for_inference()
 
@@ -271,6 +277,7 @@ class StationSession:
         bus_serial: str = "auto",
     ) -> dict[str, Any]:
         """Move one arm joint (joint id equals motor id on SO-101 / ElRobot)."""
+        await self._ensure_ready()
         _, _, profile = self._resolve_bus(bus_serial)
         if joint_id not in profile.joint_motor_ids:
             raise ValueError(
@@ -288,6 +295,8 @@ class StationSession:
         bus_serial: str = "auto",
     ) -> dict[str, Any]:
         """Move multiple arm joints at once. Keys are joint ids (motor ids 1-5 or 1-7)."""
+        joint_positions = {int(joint_id): float(position) for joint_id, position in joint_positions.items()}
+        await self._ensure_ready()
         _, _, profile = self._resolve_bus(bus_serial)
         invalid = [
             joint_id
@@ -309,7 +318,8 @@ class StationSession:
         position: float,
         bus_serial: str = "auto",
     ) -> dict[str, Any]:
-        """Set gripper opening. 0.0 = fully open, 1.0 = fully closed (calibrated range)."""
+        """Set gripper opening. 0.0 = fully closed, 1.0 = fully open (calibrated range)."""
+        await self._ensure_ready()
         _, _, profile = self._resolve_bus(bus_serial)
         if profile.gripper_motor_id is None:
             raise RuntimeError("No gripper motor detected on this bus")
@@ -320,21 +330,75 @@ class StationSession:
         )
         result["gripper_motor_id"] = profile.gripper_motor_id
         result["gripper_position"] = position
-        result["gripper_state"] = "closed" if position >= 0.9 else "open" if position <= 0.1 else "partial"
+        result["gripper_state"] = "open" if position >= 0.9 else "closed" if position <= 0.1 else "partial"
         return result
 
     async def open_gripper(self, bus_serial: str = "auto") -> dict[str, Any]:
-        return await self.set_gripper(0.0, bus_serial)
-
-    async def close_gripper(self, bus_serial: str = "auto") -> dict[str, Any]:
         return await self.set_gripper(1.0, bus_serial)
 
+    async def close_gripper(self, bus_serial: str = "auto") -> dict[str, Any]:
+        return await self.set_gripper(0.0, bus_serial)
+
+    async def wait_for_arm_pose(
+        self,
+        joint_targets: dict[int, float],
+        *,
+        tolerance: float = 0.015,
+        stable_reads: int = 5,
+        poll_s: float = 0.15,
+        timeout_s: float = 45.0,
+        bus_serial: str = "auto",
+    ) -> dict[str, Any]:
+        """Block until all listed joints reach their targets (within tolerance)."""
+        targets = {int(joint_id): float(position) for joint_id, position in joint_targets.items()}
+        deadline = time.monotonic() + timeout_s
+        consecutive_ok = 0
+        last_state: dict[str, Any] | None = None
+
+        while time.monotonic() < deadline:
+            await self.wait_for_inference(timeout_s=min(2.0, deadline - time.monotonic()))
+            last_state = self.get_arm_state(bus_serial)
+            joint_by_id = {
+                joint["motor_id"]: joint for joint in last_state.get("joints", [])
+            }
+            max_error = 0.0
+            for joint_id, target in targets.items():
+                joint = joint_by_id.get(joint_id)
+                if joint is None:
+                    raise RuntimeError(f"Joint {joint_id} missing from arm state")
+                present = float(joint["present_position_normalized"])
+                max_error = max(max_error, abs(present - target))
+
+            if max_error <= tolerance:
+                consecutive_ok += 1
+                if consecutive_ok >= stable_reads:
+                    return {
+                        "reached": True,
+                        "max_error": max_error,
+                        "joint_targets": targets,
+                        "arm_state": last_state,
+                    }
+            else:
+                consecutive_ok = 0
+
+            await asyncio.sleep(poll_s)
+
+        return {
+            "reached": False,
+            "max_error": max_error,
+            "joint_targets": targets,
+            "arm_state": last_state,
+            "note": f"Timed out after {timeout_s}s waiting for arm pose",
+        }
+
     async def enable_arm_torque(self, bus_serial: str = "auto") -> dict[str, Any]:
+        await self._ensure_ready()
         _, bus, _profile = self._resolve_bus(bus_serial)
         motor_ids = [m.get_id() for m in (bus.get_motors() or [])]
         return await self.set_torque(motor_ids, True, bus_serial)
 
     async def disable_arm_torque(self, bus_serial: str = "auto") -> dict[str, Any]:
+        await self._ensure_ready()
         _, bus, _profile = self._resolve_bus(bus_serial)
         motor_ids = [m.get_id() for m in (bus.get_motors() or [])]
         return await self.set_torque(motor_ids, False, bus_serial)

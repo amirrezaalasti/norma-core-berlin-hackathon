@@ -1,0 +1,293 @@
+{
+  "bus_serial": "5B61037157",
+  "arm_type": "elrobot",
+  "units": "mm",
+  "planning_mode": "static_hardcoded",
+  "coordinate_frame": "board_center",
+  "home_joint_positions": {
+    "1": 0.5649,
+    "2": 0.0222,
+    "3": 0.9842,
+    "4": 0.1917,
+    "5": 0.5225,
+    "6": 0.6515,
+    "7": 0.4967
+  },
+  "home_tip_offset_mm": [
+    -92.7,
+    3.2
+  ],
+  "reference_pick_joint_positions": {
+    "1": 0.5533,
+    "2": 0.8377,
+    "3": 0.5661,
+    "4": 0.4003,
+    "5": 0.4669,
+    "6": 0.8688,
+    "7": 0.2392
+  },
+  "fixed_pick_joint_positions": {
+    "1": 0.5533,
+    "2": 0.8377,
+    "3": 0.5661,
+    "4": 0.4003,
+    "5": 0.4669,
+    "6": 0.8688,
+    "7": 0.2392
+  },
+  "reference_offset_mm": [
+    46.4,
+    -1.3
+  ],
+  "reference_distance_mm": 46.42,
+  "reference_board_xy": [
+    0.7017,
+    0.4913
+  ],
+  "calibration_samples": [
+    {
+      "label": "home_tip",
+      "board_xy": [
+        0.097,
+        0.5213
+      ],
+      "offset_mm": [
+        -92.7,
+        3.2
+      ],
+      "pick_joint_positions": {
+        "1": 0.5649,
+        "2": 0.0222,
+        "3": 0.9842,
+        "4": 0.1917,
+        "5": 0.5225,
+        "6": 0.6515,
+        "7": 0.4967
+      }
+    },
+    {
+      "label": "square_8",
+      "square_id": 8,
+      "board_xy": [
+        0.5,
+        0.5
+      ],
+      "offset_mm": [
+        41.1,
+        -21.5
+      ],
+      "pick_joint_positions": {
+        "1": 0.5441,
+        "2": 0.5945,
+        "3": 0.8299,
+        "4": 0.2407,
+        "5": 0.4674,
+        "6": 0.9418,
+        "7": 0.2539
+      },
+      "gripper_pick": 0.4865
+    },
+    {
+      "label": "square_9",
+      "square_id": 9,
+      "board_xy": [
+        0.7,
+        0.5
+      ],
+      "offset_mm": [
+        48.8,
+        0.2
+      ],
+      "pick_joint_positions": {
+        "1": 0.5431,
+        "2": 0.8748,
+        "3": 0.6829,
+        "4": 0.2082,
+        "5": 0.4679,
+        "6": 0.9545,
+        "7": 0.2544
+      },
+      "gripper_pick": 0.4624
+    },
+    {
+      "label": "square_14",
+      "square_id": 14,
+      "board_xy": [
+        0.7,
+        0.8333
+      ],
+      "offset_mm": [
+        46.4,
+        44.9
+      ],
+      "pick_joint_positions": {
+        "1": 0.407,
+        "2": 0.9707,
+        "3": 0.5955,
+        "4": 0.2111,
+        "5": 0.4943,
+        "6": 0.9702,
+        "7": 0.327
+      },
+      "gripper_pick": 0.4718
+    },
+    {
+      "label": "square_15",
+      "square_id": 15,
+      "board_xy": [
+        0.9,
+        0.8333
+      ],
+      "offset_mm": [
+        83.7,
+        54.1
+      ],
+      "pick_joint_positions": {
+        "1": 0.3362,
+        "2": 0.824,
+        "3": 0.6603,
+        "4": 0.2724,
+        "5": 0.4565,
+        "6": 0.8741,
+        "7": 0.3749
+      },
+      "gripper_pick": 0.4565
+    },
+    {
+      "label": "square_10",
+      "square_id": 10,
+      "board_xy": [
+        0.9,
+        0.5
+      ],
+      "offset_mm": [
+        96.3,
+        0.6
+      ],
+      "pick_joint_positions": {
+        "1": 0.5484,
+        "2": 1.1343,
+        "3": 0.3977,
+        "4": 0.258,
+        "5": 0.4948,
+        "6": 0.955,
+        "7": 0.267
+      },
+      "gripper_pick": 0.4694
+    },
+    {
+      "label": "square_14_closed",
+      "board_xy": [
+        0.5305,
+        0.9858
+      ],
+      "offset_mm": [
+        48.1,
+        51.4
+      ],
+      "pick_joint_positions": {
+        "1": 0.3813,
+        "2": 0.8859,
+        "3": 0.6705,
+        "4": 0.2289,
+        "5": 0.4909,
+        "6": 0.8968,
+        "7": 0.3414
+      },
+      "gripper_pick": 0.4935
+    },
+    {
+      "label": "reference_pick",
+      "board_xy": [
+        0.5232,
+        0.6345
+      ],
+      "offset_mm": [
+        46.4,
+        -1.3
+      ],
+      "pick_joint_positions": {
+        "1": 0.5717,
+        "2": 0.869,
+        "3": 0.5648,
+        "4": 0.3547,
+        "5": 0.4858,
+        "6": 0.8892,
+        "7": 0.2243
+      },
+      "gripper_pick": 0.5153
+    }
+  ],
+  "pick_scales": {
+    "1": {
+      "dx": -0.000347,
+      "dy": -0.002539
+    },
+    "2": {
+      "dx": 0.006765,
+      "dy": 0.009756
+    },
+    "3": {
+      "dx": -0.003791,
+      "dy": -0.004367
+    },
+    "4": {
+      "dx": 0.000428,
+      "dy": -0.000223
+    },
+    "5": {
+      "dx": -0.000374,
+      "dy": 0.000102
+    },
+    "6": {
+      "dx": 0.002846,
+      "dy": 0.002229
+    },
+    "7": {
+      "dx": -0.002142,
+      "dy": -0.000204
+    }
+  },
+  "gripper_home": 0.5911,
+  "gripper_pick": null,
+  "gripper_close_at_pick": true,
+  "workspace": {
+    "corners_xy": [
+      [
+        21.266002844950215,
+        200.4665718349929
+      ],
+      [
+        27.220483641536273,
+        14.601706970128022
+      ],
+      [
+        264.5490753911807,
+        10.34850640113798
+      ],
+      [
+        272.2048364153627,
+        200.4665718349929
+      ]
+    ],
+    "center_xy": [
+      146.31009957325747,
+      106.47083926031294
+    ],
+    "width_px": 188.11618346983147,
+    "height_px": 244.15276668837237,
+    "angle_deg": -88.16506485646947,
+    "confidence": 1,
+    "origin_xy": [
+      180.38842975206612,
+      137.53443526170798
+    ],
+    "calibration_source": "manual",
+    "units": "mm",
+    "plane_width": 280,
+    "plane_height": 200,
+    "tag_inset_mm": 25,
+    "gripper_tip_set": true
+  },
+  "note": "Fixed pick pose from live motor dump (2026-06-21). Always move to fixed_pick_joint_positions; close gripper after approach (gripper position in dump is post-grasp locked)."
+}

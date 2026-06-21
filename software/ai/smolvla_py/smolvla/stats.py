@@ -64,3 +64,42 @@ def save_stats(stats: dict[str, torch.Tensor], path: str | Path) -> None:
 
 def load_stats(path: str | Path) -> dict[str, torch.Tensor]:
     return load_file(str(path))
+
+
+def resolve_checkpoint_dir(checkpoint: str | Path) -> Path:
+    """Resolve a local checkpoint directory or download a HuggingFace repo id."""
+    path = Path(checkpoint)
+    if path.exists():
+        return path
+
+    from huggingface_hub import snapshot_download
+
+    return Path(snapshot_download(str(checkpoint)))
+
+
+def load_stats_for_inference(
+    checkpoint_dir: str | Path,
+    *,
+    state_dim: int,
+    action_dim: int,
+    device: torch.device | str,
+) -> dict[str, torch.Tensor]:
+    """Load norma-core stats.safetensors, or fall back to [0, 1] joint defaults."""
+    checkpoint_dir = Path(checkpoint_dir)
+    stats_path = checkpoint_dir / "stats.safetensors"
+    dev = torch.device(device)
+
+    if stats_path.exists():
+        return {k: v.to(dev) for k, v in load_stats(stats_path).items()}
+
+    print(
+        f"WARNING: no stats.safetensors in {checkpoint_dir}. "
+        "Using default normalization for normalized joint positions in [0, 1]. "
+        "Fine-tuned checkpoints include dataset-specific stats and work much better."
+    )
+    return {
+        "state_mean": torch.full((state_dim,), 0.5, device=dev),
+        "state_std": torch.full((state_dim,), 0.25, device=dev),
+        "action_mean": torch.full((action_dim,), 0.5, device=dev),
+        "action_std": torch.full((action_dim,), 0.25, device=dev),
+    }

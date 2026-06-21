@@ -1,5 +1,7 @@
 # NormaCore Station — Robot Connection & MCP Setup
 
+> Part of the [NormaCore Berlin Hackathon](../../../README.md) project. This guide covers station startup, MCP configuration, and robot control from Cursor.
+
 Step-by-step guide to connect an ST3215 robot arm to your laptop, verify it works, and control it from Cursor via MCP.
 
 Tested on **macOS Apple Silicon** with an **ElRobot** arm (7 joints + gripper on motor 8).
@@ -172,7 +174,47 @@ If the robot runs on another machine, change `STATION_HOST` to e.g. `"192.168.1.
 
 ## 5. Control the robot from Cursor
 
-Recommended order:
+### Pick / place workflow (recommended)
+
+Use these high-level MCP tools in order:
+
+1. **`get_arm_state`** — read current joint and gripper positions
+2. **`pick_object`** — home → open gripper → move to fixed pick pose → close gripper
+3. **`lift_object`** — move to home while holding the object (gripper stays closed)
+4. **`place_object`** — move to pick pose → open gripper → return home
+5. **`go_home`** — move to saved home pose (set `open_gripper=false` if holding an object)
+
+Poses: home from `.norma/home_pose.json`; pick/placement joints are **static** (hardcoded in `pick_control.py`, not vision-derived).
+
+### Directional nudges (up / down / left / right)
+
+Use **`move_direction`** for commands like “go right” or “move up a bit”:
+
+- **`move_direction`** — applies teleop-calibrated joint deltas from the **current** pose
+- `direction`: `up`, `down`, `left`, or `right`
+- `amount`: `1.0` = one teleop step (default); `2.0` = double nudge
+- Calibration: `.norma/direction_nudge.json` (ElRobot defaults built in)
+
+Do **not** guess single-joint moves for directions — use `move_direction` instead.
+
+### Board grid (squares 1–15)
+
+The workspace is a **5×3 grid** (configurable via `NORMA_BOARD_GRID_COLS` / `NORMA_BOARD_GRID_ROWS`). Use square tools for chess-like pick/place:
+
+1. **`go_to_square`** or **`go_to_square_N`** — move to square N and grasp (partial gripper close)
+2. **`place_at_square`** or **`place_at_square_N`** — place held object at square N
+3. **`list_square_poses`** / **`get_square_pose`** — inspect per-square joint targets
+
+Calibrate the board in the station viewer first; joint targets are stored in `.norma/pick_calibration.json`.
+
+### Fun gestures
+
+- **`say_hi`** — fully open/close gripper twice (voice: *"say hi"*)
+- **`acknowledge`** — quick head nod when called (voice: *"hey Joe"*)
+- **`dance`** — energetic arm sway with gripper flaps
+- **`gripper_wave`** — rapid gripper open/close
+
+### Low-level motion
 
 1. **`get_arm_state`** — read current joint and gripper positions (start here).
 2. **`enable_arm_torque`** — power motors so the arm holds position.

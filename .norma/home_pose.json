@@ -1,0 +1,17 @@
+{
+  "bus_serial": "5B61037157",
+  "arm_type": "elrobot",
+  "joint_positions": {
+    "1": 0.5649,
+    "2": 0.0222,
+    "3": 0.9842,
+    "4": 0.1917,
+    "5": 0.5225,
+    "6": 0.6515,
+    "7": 0.4967
+  },
+  "gripper_position": 0.5911,
+  "home_tip_offset_mm": [-92.7, 3.2],
+  "coordinate_frame": "board_center",
+  "note": "Original initialized pose. Vision offsets are mm from the center of the 4 manual board corners. Yellow tape at home was (-92.7, 3.2) mm from board center."
+}

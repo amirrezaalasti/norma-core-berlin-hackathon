@@ -22,6 +22,7 @@ interface RobotCameraViewProps {
   busIndex: number;
   isWebControlled?: boolean;
   showMotorData?: boolean;
+  showDetectionOverlay?: boolean;
   showCalibrateButton?: boolean;
   needsCalibration?: boolean;
 }
@@ -38,6 +39,7 @@ const RobotCameraView = memo(function RobotCameraView({
   busIndex,
   isWebControlled,
   showMotorData = true,
+  showDetectionOverlay = false,
   showCalibrateButton,
   needsCalibration,
 }: RobotCameraViewProps) {
@@ -102,6 +104,7 @@ const RobotCameraView = memo(function RobotCameraView({
                 className="h-full w-full"
                 imageClassName="select-none"
                 fit={primaryCameraFit}
+                showDetectionOverlay={showDetectionOverlay}
               />
               {renderFitButton(primaryCameraFit, onPrimaryCameraFitToggle, 'Primary camera')}
             </div>
@@ -122,6 +125,7 @@ const RobotCameraView = memo(function RobotCameraView({
               className="h-full w-full"
               imageClassName="select-none"
               fit={primaryCameraFit}
+              showDetectionOverlay={showDetectionOverlay}
             />
             {renderFitButton(primaryCameraFit, onPrimaryCameraFitToggle, 'Primary camera')}
             {secondaryVideoSourceId && (

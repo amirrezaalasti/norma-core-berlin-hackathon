@@ -76,11 +76,19 @@ export default defineConfig({
     host: '::',
     allowedHosts: ['localhost', 'ds-pc.server'],
     port: 5173,
+    fs: {
+      allow: [path.resolve(__dirname, '../../../..')],
+    },
     proxy: {
       '/api': {
         target: 'ws://localhost:8889',
         changeOrigin: false,
         ws: true,
+      },
+      '/vision': {
+        target: 'http://127.0.0.1:8890',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/vision/, ''),
       },
     },
   },

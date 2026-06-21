@@ -1,6 +1,16 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { useLocalVisionDetections } from '@/hooks/useLocalVisionDetections';
+import { useManualWorkspaceCalibration } from '@/hooks/useManualWorkspaceCalibration';
+import { useVisionDetections } from '@/hooks/useVisionDetections';
 import type { LiveCameraFrame } from './live-camera-store';
 import { subscribeLiveCameraFrame } from './live-camera-store';
+import {
+  GRIPPER_TIP_LABEL,
+  MANUAL_CALIBRATION_STEP_LABELS,
+  screenToImagePoint,
+} from './manual-workspace-calibration';
+import { drawDetectionOverlay } from './vision-overlay';
+import type { VisionLatestResponse } from './vision-types';
 
 interface CameraViewerProps {
   sourceId: string | null | undefined;
@@ -8,6 +18,7 @@ interface CameraViewerProps {
   imageClassName?: string;
   overlay?: 'none' | 'fps';
   fit?: 'contain' | 'cover';
+  showDetectionOverlay?: boolean;
 }
 
 function toBlobPart(data: Uint8Array): BlobPart {
@@ -28,23 +39,130 @@ const CameraViewer = memo(function CameraViewer({
   imageClassName = '',
   overlay = 'fps',
   fit = 'contain',
+  showDetectionOverlay = false,
 }: CameraViewerProps) {
   const [fps, setFps] = useState<number>(0);
   const [hasImage, setHasImage] = useState(false);
+  const [analysisImage, setAnalysisImage] = useState<HTMLImageElement | null>(null);
   const hasImageRef = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const displayedUrlRef = useRef<string | null>(null);
   const pendingUrlRef = useRef<string | null>(null);
   const lastFrameIndexRef = useRef<string | null>(null);
   const generationRef = useRef(0);
   const frameCount = useRef<number>(0);
   const lastFpsTime = useRef<number>(Date.now());
+  const fitRef = useRef(fit);
+  const showDetectionOverlayRef = useRef(showDetectionOverlay);
+  const visionPayloadRef = useRef<VisionLatestResponse | null>(null);
+  const visionErrorRef = useRef<string | null>(null);
+  const pendingPointsRef = useRef<[number, number][]>([]);
+  const calibrationModeRef = useRef<'idle' | 'corners' | 'gripper'>('idle');
+
+  fitRef.current = fit;
+  showDetectionOverlayRef.current = showDetectionOverlay;
+
+  const {
+    manualWorkspace,
+    calibrationMode,
+    pendingPoints,
+    nextStepLabel,
+    readyForPick,
+    startCornerCalibration,
+    startGripperCalibration,
+    cancelCalibration,
+    clearCalibration,
+    addCalibrationPoint,
+  } = useManualWorkspaceCalibration(sourceId);
+
+  calibrationModeRef.current = calibrationMode;
+  pendingPointsRef.current = pendingPoints;
+  const isCalibrating = calibrationMode !== 'idle';
+
+  const {
+    payload: remotePayload,
+    connected: remoteConnected,
+    error: remoteError,
+  } = useVisionDetections(showDetectionOverlay);
+
+  const { payload: localPayload, error: localError } = useLocalVisionDetections(
+    showDetectionOverlay,
+    analysisImage,
+    hasImage,
+    manualWorkspace,
+  );
+
+  const preferRemoteRoboflow =
+    import.meta.env.VITE_VISION_PREFER_REMOTE === 'roboflow' ||
+    import.meta.env.VITE_VISION_PREFER_REMOTE === '1';
+
+  const hasManualCorners = Boolean(manualWorkspace?.corners_xy);
+  const useRemoteRoboflow =
+    preferRemoteRoboflow &&
+    remoteConnected &&
+    Boolean(remotePayload?.model?.startsWith('roboflow:')) &&
+    !hasManualCorners &&
+    (remotePayload?.detection_count ?? 0) > 0;
+
+  const visionPayload = useRemoteRoboflow && remotePayload
+    ? {
+        ...remotePayload,
+        workspace: manualWorkspace ?? remotePayload.workspace ?? null,
+      }
+    : localPayload
+      ? {
+          ...localPayload,
+          workspace: localPayload.workspace ?? manualWorkspace ?? remotePayload?.workspace ?? null,
+        }
+      : remoteConnected && remotePayload
+        ? remotePayload
+        : localPayload;
+  const visionError = useRemoteRoboflow ? remoteError ?? localError : localError ?? remoteError;
+
+  visionPayloadRef.current = visionPayload;
+  visionErrorRef.current = visionError;
 
   const revokeUrl = (url: string | null) => {
     if (url) {
       URL.revokeObjectURL(url);
     }
   };
+
+  const redrawOverlay = useCallback(() => {
+    if (!showDetectionOverlayRef.current) {
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    const image = imageRef.current;
+    const payload = visionPayloadRef.current;
+    if (!canvas || !image || !hasImageRef.current || image.naturalWidth <= 0) {
+      return;
+    }
+
+    const pendingLabels =
+      calibrationModeRef.current === 'gripper'
+        ? [GRIPPER_TIP_LABEL]
+        : MANUAL_CALIBRATION_STEP_LABELS;
+
+    drawDetectionOverlay(
+      canvas,
+      image,
+      payload?.detections ?? [],
+      fitRef.current,
+      payload?.width ?? image.naturalWidth,
+      payload?.height ?? image.naturalHeight,
+      payload?.inference_fps,
+      visionErrorRef.current ?? payload?.error ?? null,
+      payload?.model ?? null,
+      payload?.workspace ?? null,
+      pendingPointsRef.current,
+      pendingLabels,
+      payload?.gripper_tip ?? null,
+    );
+  }, []);
 
   const clearImage = useCallback((updateState = true) => {
     generationRef.current++;
@@ -65,6 +183,7 @@ const CameraViewer = memo(function CameraViewer({
     hasImageRef.current = false;
     frameCount.current = 0;
     lastFpsTime.current = Date.now();
+    setAnalysisImage(null);
     if (updateState) {
       setFps(0);
       setHasImage(false);
@@ -118,10 +237,13 @@ const CameraViewer = memo(function CameraViewer({
         hasImageRef.current = true;
         setHasImage(true);
       }
+      setAnalysisImage(img);
 
       if (previousDisplayedUrl && previousDisplayedUrl !== url) {
         URL.revokeObjectURL(previousDisplayedUrl);
       }
+
+      requestAnimationFrame(() => redrawOverlay());
     };
 
     img.onerror = () => {
@@ -132,7 +254,7 @@ const CameraViewer = memo(function CameraViewer({
     };
 
     img.src = url;
-  }, []);
+  }, [redrawOverlay]);
 
   useEffect(() => {
     clearImage();
@@ -147,20 +269,146 @@ const CameraViewer = memo(function CameraViewer({
     };
   }, [clearImage, sourceId, updateImage]);
 
+  useEffect(() => {
+    redrawOverlay();
+  }, [
+    redrawOverlay,
+    visionPayload,
+    visionError,
+    showDetectionOverlay,
+    calibrationMode,
+    pendingPoints,
+    manualWorkspace,
+  ]);
+
+  const handleCalibrationClick = useCallback(
+    (event: React.MouseEvent<HTMLCanvasElement>) => {
+      if (calibrationModeRef.current === 'idle' || !containerRef.current || !imageRef.current) {
+        return;
+      }
+
+      const image = imageRef.current;
+      const container = containerRef.current;
+      const point = screenToImagePoint(
+        event.clientX,
+        event.clientY,
+        container.getBoundingClientRect(),
+        container.clientWidth,
+        container.clientHeight,
+        image.naturalWidth,
+        image.naturalHeight,
+        fitRef.current,
+      );
+      if (point) {
+        addCalibrationPoint(point);
+      }
+    },
+    [addCalibrationPoint],
+  );
+
+  useEffect(() => {
+    if (!showDetectionOverlay) {
+      return;
+    }
+
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      redrawOverlay();
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [redrawOverlay, showDetectionOverlay]);
+
   if (!sourceId) {
     return <div className="text-text-primary p-4">Waiting for USB Video data...</div>;
   }
 
   const fitClassName = fit === 'cover' ? 'object-cover' : 'object-contain';
+  const hasCorners = Boolean(manualWorkspace?.corners_xy);
 
   return (
     <div className={`overflow-hidden h-full ${className}`}>
-      <div className="relative flex justify-center items-center h-full w-full bg-black/20">
+      <div
+        ref={containerRef}
+        className="relative flex justify-center items-center h-full w-full bg-black/20"
+      >
         <img
           ref={imageRef}
           alt="USB Camera Feed"
           className={`h-full w-full ${fitClassName} ${imageClassName} ${hasImage ? '' : 'hidden'}`}
         />
+        <canvas
+          ref={canvasRef}
+          onClick={handleCalibrationClick}
+          className={`absolute inset-0 h-full w-full ${
+            showDetectionOverlay && hasImage
+              ? isCalibrating
+                ? 'cursor-crosshair pointer-events-auto'
+                : 'pointer-events-none'
+              : 'hidden'
+          }`}
+        />
+        {showDetectionOverlay && hasImage && (
+          <div className="absolute bottom-2 left-2 z-40 flex flex-wrap items-center gap-2 pointer-events-auto">
+            {isCalibrating ? (
+              <>
+                <span className="rounded bg-surface-secondary/90 px-2 py-1 text-xs font-mono text-accent-data">
+                  {calibrationMode === 'gripper'
+                    ? `Click ${GRIPPER_TIP_LABEL}`
+                    : `Click corner ${nextStepLabel ?? '…'} (${pendingPoints.length + 1}/4)`}
+                </span>
+                <button
+                  type="button"
+                  onClick={cancelCalibration}
+                  className="rounded bg-surface-secondary/90 px-2 py-1 text-xs text-text-primary hover:bg-surface-primary"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={startCornerCalibration}
+                  className="rounded bg-accent-data/90 px-2 py-1 text-xs font-medium text-surface-base hover:bg-accent-data"
+                >
+                  Set 4 points
+                </button>
+                {hasCorners && !visionPayload?.gripper_tip?.pixel_xy && (
+                  <button
+                    type="button"
+                    onClick={startGripperCalibration}
+                    className={`rounded px-2 py-1 text-xs font-medium ${
+                      readyForPick
+                        ? 'bg-surface-secondary/90 text-text-primary hover:bg-surface-primary'
+                        : 'bg-amber-500/90 text-surface-base hover:bg-amber-400'
+                    }`}
+                  >
+                    Set gripper tip
+                  </button>
+                )}
+                {(readyForPick || Boolean(visionPayload?.gripper_tip?.pixel_xy)) && (
+                  <span className="rounded bg-emerald-600/90 px-2 py-1 text-xs font-mono text-white">
+                    Ready for pick
+                  </span>
+                )}
+                {manualWorkspace && (
+                  <button
+                    type="button"
+                    onClick={clearCalibration}
+                    className="rounded bg-surface-secondary/90 px-2 py-1 text-xs text-text-primary hover:bg-surface-primary"
+                  >
+                    Clear
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
         {!hasImage && (
           <div className="text-text-primary p-4">Waiting for USB Video data...</div>
         )}
