@@ -180,7 +180,7 @@ Requires [Claude Code](https://code.claude.com/docs/en/overview) installed and `
 #### B) Cursor + MCP (IDE)
 
 1. Open this repo in **Cursor**
-2. Settings → **MCP** → refresh — confirm **norma-station** is connected ([`.cursor/mcp.json`](.cursor/mcp.json))
+2. Settings → **MCP** → refresh — confirm **norma-station** is connected ([`.cursor/mcp.json`](.cursor/mcp.json)); you should see **67 tools** including `say_hi`, `transfer_object`, and `go_to_square_N`
 3. Use the same example prompts as above in Cursor chat
 
 #### C) Voice — n8n (recommended for demos)
@@ -260,7 +260,7 @@ Details: [`software/station/vision/README.md`](software/station/vision/README.md
 | `go_to_square` / `go_to_square_N` | Move to board square 1–15 and grasp |
 | `place_at_square` / `place_at_square_N` | Place held object at a square |
 | `transfer_object` | Pick at `from_square` and place at `to_square` in one call |
-| `move_direction` | Calibrated up / down / left / right nudge |
+| `move_direction` | Table nudge up/down/left/right via motor endpoints (m1 yaw, m2+m3 vertical) |
 | `say_hi` / `acknowledge` / `dance` | Demo gestures |
 | `detect_workspace_objects` | Vision offset from gripper (optional) |
 
@@ -314,7 +314,7 @@ Local robot state lives under `.norma/` (gitignored secrets in `.env`):
 | `home_pose.json` | Arm rest pose — set via `save_home_pose` |
 | `pick_calibration.json` | Board workspace + per-square joint targets |
 | `manual_workspace.json` | Viewer workspace corners for vision overlay |
-| `direction_nudge.json` | Teleop-calibrated directional joint deltas |
+| `direction_nudge.json` | Motor step endpoints + nudge fraction for `move_direction` |
 
 ---
 

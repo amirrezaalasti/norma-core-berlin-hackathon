@@ -1,6 +1,6 @@
 [project]
 name = "norma-station-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP server for NormaCore Station — control robots and read sensor state from AI assistants"
 requires-python = ">=3.10"
 dependencies = [

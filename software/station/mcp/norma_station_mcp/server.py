@@ -27,16 +27,23 @@ mcp = FastMCP(
         "- place_at_square_N (1-15): move to square with gripper closed, open gripper last to place\n"
         "- place_at_square: same as place_at_square_N but pass square_id (1-15)\n"
         "- list_square_poses / get_square_pose: inspect per-square joint targets\n"
-        "- move_direction: nudge up/down/left/right using teleop-calibrated joint deltas\n"
         "- pick_object: open gripper, move to static pick pose, partial gripper grasp\n"
         "- lift_object: move to home while holding object (gripper stays closed)\n"
         "- place_object: move to static pick pose with gripper closed, open gripper last, return home\n"
         "- get_fixed_pick_pose / get_home_pose: read home and static pick poses\n\n"
         "Pick/placement always uses hardcoded STATIC_PICK_JOINTS — no vision offset planning.\n\n"
+        "Directional table moves (ElRobot — use move_direction, NOT move_joint):\n"
+        "- move_direction(direction, amount=1.0): nudge from current pose toward motor-range endpoints\n"
+        "- left/right: motor 1 only (left→1176 steps, right→2920 steps)\n"
+        "- up/down: motors 2+3 (m2 up→1373 / down→2732; m3 up→910 / down→3186)\n"
+        "- amount=1.0 moves ~10% of each motor span (visible step, not to the limit); amount=2.0 doubles\n"
+        "- Directions are defined relative to saved home_pose — call get_direction_calibration first if unsure\n"
+        "- Do NOT guess joint coordinates or normalized 0-1 values for up/down/left/right\n"
+        "- Other motors: m4 elbow, m6 wrist pitch, m7 wrist rotate, m8 gripper (see get_direction_calibration)\n\n"
         "Other tools:\n"
         "- get_arm_state: read joints + gripper with roles\n"
-        "- move_direction: calibrated up/down/left/right nudge (amount=1.0 is one teleop step)\n"
-        "- move_joint / move_arm_pose: joint-space motion (0.0-1.0 per joint)\n"
+        "- get_direction_calibration: motor endpoints, nudge fraction, home reference\n"
+        "- move_joint / move_arm_pose: joint-space motion (0.0-1.0 per joint) — not for table directions\n"
         "- open_gripper / close_gripper / set_gripper: gripper control\n"
         "- enable_arm_torque / disable_arm_torque: power all motors\n"
         "- detect_objects / detect_workspace_objects: optional vision (not used for pick)\n"
@@ -154,13 +161,16 @@ async def move_direction(
     direction: str,
     amount: float = 1.0,
     bus_serial: str = "auto",
+    wait: bool = False,
 ) -> str:
-    """Nudge the arm up, down, left, or right using teleop-calibrated joint deltas.
+    """Nudge the arm up, down, left, or right toward ElRobot motor-range endpoints.
 
-    Applies coordinated joint changes from the current pose (not Cartesian mm).
-    amount=1.0 is one teleop button press; use 2.0 for a double nudge.
-    Prefer this over move_joint for voice commands like "go right" or "move up".
-    Returns immediately by default so voice commands are not blocked waiting for settle.
+    direction: one of up, down, left, right (aliases: raise, lower, etc.).
+    ElRobot table mapping — left/right: motor 1 (1176←home→2920);
+    up/down: motors 2 and 3 together (m2: 1373 up / 2732 down; m3: 910 up / 3186 down).
+    Each amount=1.0 nudge moves ~10% of motor span toward the endpoint (not to the limit).
+    Use amount=2.0 for a bigger move. Never use move_joint for table directions.
+    Set wait=true to block until motion settles (default false for voice responsiveness).
     """
     from .direction_control import move_direction as _move_direction
 
@@ -171,25 +181,42 @@ async def move_direction(
             direction,
             amount=amount,
             bus_serial=bus_serial,
+            wait=wait,
         )
     )
 
 
 @mcp.tool
 async def get_direction_calibration() -> str:
-    """Return teleop direction nudge calibration (joint deltas per up/down/left/right)."""
-    from .direction_control import DIRECTION_NUDGE_PATH, load_direction_nudge
+    """Return direction calibration: motor step endpoints, nudge fraction, and home reference.
 
-    payload = load_direction_nudge()
-    if payload is None:
-        return _json(
-            {
-                "saved": False,
-                "path": str(DIRECTION_NUDGE_PATH),
-                "note": "Using built-in ElRobot defaults when file is missing.",
-            }
-        )
-    return _json({"saved": True, **payload})
+    Call before move_direction if unsure which motors map to up/down/left/right.
+    ElRobot: m1 table yaw, m2+m3 vertical, m4 elbow, m6 wrist pitch, m7 wrist rotate, m8 gripper.
+    """
+    from .direction_control import (
+        DIRECTION_NUDGE_PATH,
+        direction_calibration_payload,
+        load_direction_nudge,
+    )
+    from .pick_control import load_home_pose
+
+    arm_type = "elrobot"
+    try:
+        session = get_session()
+        arm_state = session.get_arm_state("auto")
+        arm_type = str(arm_state.get("arm_type") or arm_type)
+    except Exception:
+        home = load_home_pose()
+        if home and home.get("arm_type"):
+            arm_type = str(home["arm_type"])
+        else:
+            saved = load_direction_nudge()
+            if saved and saved.get("arm_type"):
+                arm_type = str(saved["arm_type"])
+
+    payload = direction_calibration_payload(arm_type)
+    saved = load_direction_nudge() is not None
+    return _json({"saved": saved, "path": str(DIRECTION_NUDGE_PATH), **payload})
 
 
 @mcp.tool

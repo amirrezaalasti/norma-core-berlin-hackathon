@@ -162,7 +162,8 @@ The repo includes [`.mcp.json`](../../../.mcp.json) at the project root:
         "norma_station_mcp"
       ],
       "env": {
-        "STATION_HOST": "localhost:8888"
+        "STATION_HOST": "localhost:8888",
+        "NORMA_MOTOR_SPEED_SCALE": "0.5"
       }
     }
   }
@@ -185,13 +186,29 @@ Docs: [Claude Code MCP](https://code.claude.com/docs/en/mcp)
 
 ### Cursor (IDE)
 
-The project also includes [`.cursor/mcp.json`](../../../.cursor/mcp.json) with the same server definition.
+The project also includes [`.cursor/mcp.json`](../../../.cursor/mcp.json) with the same server definition as [`.mcp.json`](../../../.mcp.json).
 
 1. Ensure station is running (step 2).
-2. Reload MCP servers in Cursor (Settings → MCP → refresh, or restart Cursor).
-3. The **norma-station** server should appear with tools like `get_arm_state`, `move_joint`, `open_gripper`, etc.
+2. Open this repo as the Cursor workspace (MCP runs with the workspace as cwd).
+3. **Settings → MCP → refresh** (or restart Cursor) after pulling MCP changes — Cursor caches tool lists; a refresh is required to pick up new tools like `say_hi`, `dance`, `transfer_object`, and `go_to_square_N`.
+4. Confirm **norma-station** is connected (green). You should see **67 tools**, including:
+   - **Gestures:** `say_hi`, `acknowledge`, `gripper_wave`, `dance`
+   - **Board:** `go_to_square`, `go_to_square_1`…`15`, `place_at_square`, `place_at_square_1`…`15`, `transfer_object`, `list_square_poses`
+   - **Pick/place:** `pick_object`, `lift_object`, `place_object`, `go_home`
+   - **Motion:** `move_direction`, `move_joint`, `move_arm_pose`, `open_gripper`, `close_gripper`
+   - **State:** `get_arm_state`, `station_connection_status`, `get_home_pose`
 
 If the robot runs on another machine, change `STATION_HOST` to e.g. `"192.168.1.100:8888"` in both config files.
+
+Verify the local tool surface (optional):
+
+```bash
+uv run --project software/station/mcp python -c "
+import asyncio
+from norma_station_mcp.server import mcp
+print(len(asyncio.run(mcp.get_tools())), 'tools')
+"
+```
 
 ---
 
@@ -213,10 +230,11 @@ Poses: home from `.norma/home_pose.json`; pick/placement joints are **static** (
 
 Use **`move_direction`** for commands like “go right” or “move up a bit”:
 
-- **`move_direction`** — applies teleop-calibrated joint deltas from the **current** pose
+- **`move_direction`** — nudges toward motor-range endpoints from the **current** pose (not fixed joint coordinates)
 - `direction`: `up`, `down`, `left`, or `right`
-- `amount`: `1.0` = one teleop step (default); `2.0` = double nudge
-- Calibration: `.norma/direction_nudge.json` (ElRobot defaults built in)
+- ElRobot: **left/right** → motor 1 (1176 ← home → 2920); **up/down** → motors 2 and 3
+- `amount`: `1.0` ≈ 10% of each motor span (default); `2.0` = double nudge
+- Optional override: `.norma/direction_nudge.json` (built-in ElRobot endpoints when missing)
 
 Do **not** guess single-joint moves for directions — use `move_direction` instead.
 

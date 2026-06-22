@@ -2,29 +2,29 @@
   "bus_serial": "5B61037157",
   "arm_type": "elrobot",
   "joint_positions": {
-    "1": 0.477713,
-    "2": -0.221065,
-    "3": 1.006309,
-    "4": 0.592241,
-    "5": 0.400235,
-    "6": 0.782547,
-    "7": 0.522599
+    "1": 0.524083,
+    "2": 0.312593,
+    "3": 0.064587,
+    "4": 0.669273,
+    "5": 0.019486,
+    "6": 0.999016,
+    "7": 0.58758
   },
   "motor_steps": {
-    "1": 2002,
-    "2": 802,
-    "3": 2690,
-    "4": 2262,
-    "5": 1709,
-    "6": 2647,
-    "7": 2136
+    "1": 2090,
+    "2": 1795,
+    "3": 1057,
+    "4": 2416,
+    "5": 963,
+    "6": 3062,
+    "7": 2378
   },
-  "gripper_position": 0.972579,
-  "gripper_steps": 2858,
+  "gripper_position": 0.996807,
+  "gripper_steps": 2826,
   "home_tip_offset_mm": [
     -92.7,
     3.2
   ],
   "coordinate_frame": "board_center",
-  "note": "Exact static pose from live motor dump (2026-06-21). Uses motor_steps for replay."
+  "note": "Exact static pose from live motor dump (2026-06-22). Uses motor_steps for replay."
 }

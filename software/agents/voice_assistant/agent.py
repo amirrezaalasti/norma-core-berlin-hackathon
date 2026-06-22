@@ -65,14 +65,15 @@ async def run_agent():
                             "When the user says hi, hello, or wave, call say_hi (gripper fully open/close twice). "
                             "When the user only calls the robot or asks if you heard them, call acknowledge "
                             "to nod the head back and forth from the current pose. "
-                            "For directional motion (up, down, left, right, go home), prefer move_direction and "
-                            "go_home instead of guessing individual joint values. "
+                            "For directional motion (up, down, left, right, go home), always use move_direction "
+                            "and go_home — never move_joint or guess joint values. "
+                            "move_direction uses motor-range endpoints: left/right=motor 1, up/down=motors 2+3. "
+                            "amount=1.0 is a normal nudge (~10% span); use amount=2.0 for a bigger move. "
                             "When the user says go home or return home, call go_home only — never place_at_square. "
                             "When the user asks to move an object from one board position to another "
                             "(e.g. 'from position 9 to position 15'), call transfer_object with from_square and "
                             "to_square (integers 1-15). Do not call place_at_square unless the arm is already "
                             "holding an object after a pick. "
-                            "Use amount=2.0 in move_direction when the user asks for a bigger or more visible move. "
                             "Keep your verbal responses extremely short and concise, since this is a voice conversation."
                         )
                     }

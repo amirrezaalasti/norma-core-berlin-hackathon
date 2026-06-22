@@ -1,0 +1,20 @@
+{
+  "exported_at": "2026-06-22T130734Z",
+  "arm_type": "elrobot",
+  "bus_serial": "5B61037157",
+  "source_paths": {
+    "norma": "/Users/amirrezaalasti/Desktop/selfprojects/norma-core-berlin-hackathon/.norma",
+    "camera": "/Users/amirrezaalasti/Desktop/selfprojects/norma-core-berlin-hackathon/images"
+  },
+  "files": [
+    "direction_nudge.json",
+    "extrinsics.json",
+    "home_pose.json",
+    "intrinsics.json",
+    "manifest.json",
+    "manual_workspace.json",
+    "pick_calibration.json",
+    "square_poses.json"
+  ],
+  "restore_hint": "Copy JSON files from this folder back to .norma/ (same filenames except intrinsics/extrinsics -> images/)."
+}

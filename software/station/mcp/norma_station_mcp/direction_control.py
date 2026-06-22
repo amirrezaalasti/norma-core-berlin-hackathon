@@ -6,11 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from .paths import REPO_ROOT
-from .pick_control import _prepare_session
+from .pick_control import _prepare_session, load_home_pose
 
 DIRECTION_MOTION_TIMEOUT_S = 6.0
 DIRECTION_TOLERANCE_STEPS = 15
 DIRECTION_STABLE_READS = 2
+
+# Visible table nudge per amount=1.0 — fraction of each motor's calibrated span.
+DEFAULT_NUDGE_SPAN_FRACTION = 0.10
 
 DIRECTION_NUDGE_PATH = Path(
     os.environ.get(
@@ -28,47 +31,53 @@ DIRECTION_ALIASES: dict[str, str] = {
     "lower": "down",
     "left": "left",
     "right": "right",
+    "elbow_up": "elbow_up",
+    "elbow_down": "elbow_down",
+    "hand_up": "hand_up",
+    "wrist_up": "hand_up",
+    "hand_down": "hand_down",
+    "wrist_down": "hand_down",
+    "wrist_ccw": "wrist_ccw",
+    "wrist_cw": "wrist_cw",
+    "hand_rotate_ccw": "wrist_ccw",
+    "hand_rotate_cw": "wrist_cw",
 }
 
-# Built-in fallback for ElRobot when the JSON file is missing.
-DEFAULT_ELROBOT_NUDGES: dict[str, dict[str, float]] = {
-    "up": {
-        "1": -0.0019,
-        "2": 0.0032,
-        "3": -0.0234,
-        "4": -0.1626,
-        "5": -0.001,
-        "6": -0.0246,
-        "7": -0.0003,
-    },
-    "down": {
-        "1": -0.0039,
-        "2": 0.2007,
-        "3": 0.009,
-        "4": 0.09,
-        "5": -0.0629,
-        "6": 0.2879,
-        "7": -0.0006,
-    },
-    "right": {
-        "1": 0.1759,
-        "2": 0.2835,
-        "3": 0.0013,
-        "4": -0.0595,
-        "5": -0.1006,
-        "6": 0.2912,
-        "7": -0.0008,
-    },
-    "left": {
-        "1": -0.3769,
-        "2": 0.0169,
-        "3": -0.0017,
-        "4": 0.0135,
-        "5": -0.1006,
-        "6": 0.2903,
-        "7": -0.0003,
-    },
+# ElRobot motor step endpoints toward each table direction (not absolute targets per nudge).
+# Directions are defined relative to the saved home pose; each nudge moves a fraction of span
+# toward these endpoints without reaching the limit.
+ELROBOT_DIRECTION_ENDPOINTS: dict[str, dict[int, int]] = {
+    "up": {2: 1373, 3: 910},
+    "down": {2: 2732, 3: 3186},
+    "left": {1: 1176},
+    "right": {1: 2920},
+    "elbow_up": {4: 961},
+    "elbow_down": {4: 3135},
+    "hand_up": {6: 1032},
+    "hand_down": {6: 3064},
+    "wrist_ccw": {7: 2564},
+    "wrist_cw": {7: 3932},
 }
+
+ELROBOT_MOTOR_SEMANTICS: dict[int, str] = {
+    1: "base yaw — left (1176) / right (2920) on table",
+    2: "shoulder — up (1373) / down (2732)",
+    3: "upper arm — up (910) / down (3186)",
+    4: "elbow — up (961) / down (3135)",
+    6: "wrist pitch — up (1032) / down (3064)",
+    7: "wrist rotate — CCW (2564) / CW (3932)",
+    8: "gripper",
+}
+
+
+def nudge_span_fraction() -> float:
+    raw = os.environ.get("NORMA_DIRECTION_NUDGE_FRACTION")
+    if raw is None:
+        return DEFAULT_NUDGE_SPAN_FRACTION
+    value = float(raw)
+    if value <= 0.0 or value > 1.0:
+        raise ValueError("NORMA_DIRECTION_NUDGE_FRACTION must be between 0 and 1")
+    return value
 
 
 def normalize_direction(direction: str) -> str:
@@ -87,34 +96,62 @@ def load_direction_nudge() -> dict[str, Any] | None:
     return json.loads(DIRECTION_NUDGE_PATH.read_text())
 
 
-def direction_deltas_for_arm(arm_type: str) -> dict[str, dict[int, float]]:
+def _parse_motor_endpoints(raw: dict[str, Any]) -> dict[int, int]:
+    motors = raw.get("motors") or raw.get("motor_endpoints") or {}
+    return {int(motor_id): int(steps) for motor_id, steps in motors.items()}
+
+
+def direction_endpoints_for_arm(arm_type: str) -> dict[str, dict[int, int]]:
     payload = load_direction_nudge()
     if payload is not None and payload.get("arm_type") == arm_type:
         directions = payload.get("directions") or {}
-        parsed: dict[str, dict[int, float]] = {}
+        parsed: dict[str, dict[int, int]] = {}
         for name, entry in directions.items():
-            raw = entry.get("joint_deltas") or {}
-            parsed[name] = {int(j): float(v) for j, v in raw.items()}
+            if not isinstance(entry, dict):
+                continue
+            endpoints = _parse_motor_endpoints(entry)
+            if endpoints:
+                parsed[name] = endpoints
         if parsed:
             return parsed
 
     if arm_type == "elrobot":
-        return {
-            name: {int(j): float(v) for j, v in deltas.items()}
-            for name, deltas in DEFAULT_ELROBOT_NUDGES.items()
-        }
+        return {name: dict(motors) for name, motors in ELROBOT_DIRECTION_ENDPOINTS.items()}
 
     raise RuntimeError(
-        f"No direction nudge calibration for arm type '{arm_type}'. "
+        f"No direction endpoint map for arm type '{arm_type}'. "
         f"Add {DIRECTION_NUDGE_PATH} or use move_joint / move_arm_pose."
     )
 
 
-def _current_joint_dict(arm_state: dict[str, Any]) -> dict[int, float]:
-    return {
-        int(joint["motor_id"]): float(joint["present_position_normalized"])
-        for joint in arm_state.get("joints") or []
+def direction_calibration_payload(arm_type: str) -> dict[str, Any]:
+    endpoints = direction_endpoints_for_arm(arm_type)
+    fraction = nudge_span_fraction()
+    payload = load_direction_nudge()
+    if payload is not None and payload.get("nudge_span_fraction") is not None:
+        fraction = float(payload["nudge_span_fraction"])
+
+    home = load_home_pose()
+    result: dict[str, Any] = {
+        "arm_type": arm_type,
+        "nudge_span_fraction": fraction,
+        "directions": {
+            name: {"motors": {str(m): steps for m, steps in motors.items()}}
+            for name, motors in endpoints.items()
+        },
+        "note": (
+            "Each move_direction nudge shifts primary motors toward these step endpoints "
+            f"by nudge_span_fraction ({fraction:.0%}) of each motor span per amount=1.0. "
+            "Semantics are relative to the saved home pose."
+        ),
     }
+    if arm_type == "elrobot":
+        result["motor_semantics"] = {
+            str(motor_id): label for motor_id, label in ELROBOT_MOTOR_SEMANTICS.items()
+        }
+    if home is not None:
+        result["home_motor_steps"] = home.get("motor_steps")
+    return result
 
 
 def _current_joint_steps(arm_state: dict[str, Any]) -> dict[int, int]:
@@ -138,42 +175,33 @@ def joint_step_targets_for_direction(
     *,
     arm_type: str,
     amount: float = 1.0,
+    nudge_fraction: float | None = None,
 ) -> dict[int, int]:
+    """Move primary motors a visible fraction toward direction endpoints."""
     normalized = normalize_direction(direction)
-    nudges = direction_deltas_for_arm(arm_type)
-    deltas = nudges[normalized]
+    endpoints = direction_endpoints_for_arm(arm_type)[normalized]
+    fraction = nudge_fraction if nudge_fraction is not None else nudge_span_fraction()
+    payload = load_direction_nudge()
+    if payload is not None and payload.get("nudge_span_fraction") is not None:
+        fraction = float(payload["nudge_span_fraction"])
 
-    targets: dict[int, int] = {}
-    for joint_id, steps in current_steps.items():
-        delta_norm = float(deltas.get(joint_id, 0.0)) * amount
-        if abs(delta_norm) < 1e-5:
-            targets[joint_id] = steps
+    targets = dict(current_steps)
+    for motor_id, endpoint_step in endpoints.items():
+        if motor_id not in current_steps:
             continue
-        range_min, range_max = ranges[joint_id]
-        span = range_max - range_min
-        targets[joint_id] = steps + int(round(delta_norm * span))
+        current = current_steps[motor_id]
+        range_min, range_max = ranges.get(motor_id, (0, 0))
+        span = max(range_max - range_min, 1)
+        nudge = max(1, int(round(fraction * amount * span)))
+
+        if endpoint_step > current:
+            targets[motor_id] = min(current + nudge, endpoint_step, range_max)
+        elif endpoint_step < current:
+            targets[motor_id] = max(current - nudge, endpoint_step, range_min)
+        else:
+            targets[motor_id] = current
     return targets
 
-
-def joint_targets_for_direction(
-    current_joints: dict[int, float],
-    direction: str,
-    *,
-    arm_type: str,
-    amount: float = 1.0,
-) -> dict[int, float]:
-    normalized = normalize_direction(direction)
-    nudges = direction_deltas_for_arm(arm_type)
-    deltas = nudges[normalized]
-
-    targets: dict[int, float] = {}
-    for joint_id, home_pos in current_joints.items():
-        delta = float(deltas.get(joint_id, 0.0)) * amount
-        if abs(delta) < 1e-5:
-            targets[joint_id] = home_pos
-            continue
-        targets[joint_id] = max(0.0, min(1.0, home_pos + delta))
-    return targets
 
 
 async def move_direction(
@@ -184,7 +212,7 @@ async def move_direction(
     bus_serial: str = "auto",
     wait: bool = False,
 ) -> dict[str, Any]:
-    """Move the arm one calibrated teleop nudge in up/down/left/right."""
+    """Nudge the arm toward up/down/left/right using motor-range endpoints from home."""
     if amount <= 0:
         raise ValueError("amount must be positive")
 
@@ -192,9 +220,9 @@ async def move_direction(
     await _prepare_session(session, bus_serial)
     arm_state = session.get_arm_state(bus_serial)
     arm_type = str(arm_state.get("arm_type") or "unknown")
-    current = _current_joint_dict(arm_state)
     current_steps = _current_joint_steps(arm_state)
     ranges = _joint_ranges(arm_state)
+    endpoints = direction_endpoints_for_arm(arm_type)[normalized]
     targets = joint_step_targets_for_direction(
         current_steps,
         ranges,
@@ -203,36 +231,41 @@ async def move_direction(
         amount=amount,
     )
 
-    nudges = direction_deltas_for_arm(arm_type)
     applied_deltas = {
-        joint_id: targets[joint_id] - current_steps[joint_id]
-        for joint_id in targets
-        if targets[joint_id] != current_steps[joint_id]
+        motor_id: targets[motor_id] - current_steps[motor_id]
+        for motor_id in endpoints
+        if motor_id in targets and targets[motor_id] != current_steps[motor_id]
     }
     primary = sorted(
         applied_deltas,
-        key=lambda joint_id: abs(applied_deltas[joint_id]),
+        key=lambda motor_id: abs(applied_deltas[motor_id]),
         reverse=True,
-    )[:3]
+    )
 
     await session.move_motors_steps(targets, bus_serial)
 
+    home = load_home_pose()
+    calibration = direction_calibration_payload(arm_type)
     result: dict[str, Any] = {
         "action": "move_direction",
         "direction": normalized,
         "amount": amount,
         "arm_type": arm_type,
-        "motor_steps": targets,
-        "joint_targets": {
-            joint_id: round(current[joint_id], 4) for joint_id in current
-        },
+        "nudge_span_fraction": calibration["nudge_span_fraction"],
+        "direction_endpoints": {str(m): steps for m, steps in endpoints.items()},
+        "motor_steps_before": {str(m): current_steps[m] for m in endpoints if m in current_steps},
+        "motor_steps": {str(m): targets[m] for m in targets},
         "applied_step_deltas": applied_deltas,
-        "primary_joints": primary,
+        "primary_motors": primary,
         "note": (
-            "Direction moves use teleop-calibrated joint deltas from the current pose "
-            "in motor steps (works outside normalized 0-1). Use amount=2.0 for a double nudge."
+            "Moves primary motors toward calibrated range endpoints for this direction "
+            f"({calibration['nudge_span_fraction']:.0%} of span per amount=1.0). "
+            "Left/right uses motor 1; up/down uses motors 2 and 3. "
+            "Call get_home_pose / get_direction_calibration for reference."
         ),
     }
+    if home is not None:
+        result["home_motor_steps"] = home.get("motor_steps")
     if wait:
         result["motion_settled"] = await session.wait_for_arm_steps(
             targets,
